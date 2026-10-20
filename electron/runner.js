@@ -85,12 +85,32 @@ export function executeJob(job, hooks = {}) {
   // yt-dlp-backed provider: the binary is resolved asynchronously, but the
   // handle itself must be returned synchronously so the queue can cancel it.
   let dlHandle = null;
-  const promise = resolveYtDlp(settings)
+  const handle = {
+    cancelled: false,
+    promise: null,
+    cancel() {
+      if (handle.cancelled) return;
+      handle.cancelled = true;
+      if (dlHandle) dlHandle.cancel();
+    }
+  };
+
+  handle.promise = resolveYtDlp(settings)
     .then((bin) => {
+      if (handle.cancelled) {
+        const cancelErr = new Error('Download cancelled');
+        cancelErr.name = 'AbortError';
+        throw cancelErr;
+      }
       if (!bin) {
         throw new Error('yt-dlp is not installed. Use Settings → Binaries → Install yt-dlp, or run: npm run setup-bins');
       }
       return guard.then(() => {
+        if (handle.cancelled) {
+          const cancelErr = new Error('Download cancelled');
+          cancelErr.name = 'AbortError';
+          throw cancelErr;
+        }
         dlHandle = provider.startDownload(
           {
             url: job.url,
@@ -98,19 +118,23 @@ export function executeJob(job, hooks = {}) {
             formatOption: extra.formatOption || null,
             playlistItems: extra.playlistItems || null,
             expectedId: extra.expectedId || null,
-            onProgress: (ev) => hooks.onProgress?.(ev)
+            onProgress: (ev) => {
+              if (!handle.cancelled) hooks.onProgress?.(ev);
+            }
           },
           { ...ctx, ytdlpBin: bin }
         );
         return dlHandle.promise;
       });
     })
-    .then((r) => r);
+    .catch((err) => {
+      if (handle.cancelled || /cancel|abort/i.test(err?.message)) {
+        const cancelErr = new Error('Download cancelled');
+        cancelErr.name = 'AbortError';
+        throw cancelErr;
+      }
+      throw err;
+    });
 
-  return {
-    promise,
-    cancel() {
-      if (dlHandle) dlHandle.cancel();
-    }
-  };
+  return handle;
 }
