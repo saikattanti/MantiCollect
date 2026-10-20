@@ -41,6 +41,10 @@ CREATE TABLE IF NOT EXISTS jobs (
   etag TEXT,
   last_modified TEXT,
   resumable INTEGER DEFAULT 0,
+  is_segmented INTEGER DEFAULT 0,
+  segments_count INTEGER DEFAULT 0,
+  segments_done INTEGER DEFAULT 0,
+  segment_plan TEXT,
   created_at INTEGER NOT NULL,
   started_at INTEGER,
   finished_at INTEGER
@@ -58,6 +62,10 @@ export function migrate(db) {
   if (!cols.has('etag')) db.exec(`ALTER TABLE jobs ADD COLUMN etag TEXT;`);
   if (!cols.has('last_modified')) db.exec(`ALTER TABLE jobs ADD COLUMN last_modified TEXT;`);
   if (!cols.has('resumable')) db.exec(`ALTER TABLE jobs ADD COLUMN resumable INTEGER DEFAULT 0;`);
+  if (!cols.has('is_segmented')) db.exec(`ALTER TABLE jobs ADD COLUMN is_segmented INTEGER DEFAULT 0;`);
+  if (!cols.has('segments_count')) db.exec(`ALTER TABLE jobs ADD COLUMN segments_count INTEGER DEFAULT 0;`);
+  if (!cols.has('segments_done')) db.exec(`ALTER TABLE jobs ADD COLUMN segments_done INTEGER DEFAULT 0;`);
+  if (!cols.has('segment_plan')) db.exec(`ALTER TABLE jobs ADD COLUMN segment_plan TEXT;`);
   return db;
 }
 
