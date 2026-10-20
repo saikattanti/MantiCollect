@@ -100,12 +100,23 @@ export async function directDownload(url, destDir, {
   const res = await fetchWithSafeRedirects(url, { allowLocal, signal });
   if (res.status !== 200) {
     if (res.body) res.body.cancel().catch(() => {});
-    throw new Error(`Server returned HTTP ${res.status}`);
+    const msg = {
+      401: 'Authentication required (HTTP 401)',
+      403: 'Access forbidden by server (HTTP 403)',
+      404: 'File not found on server (HTTP 404)',
+      410: 'Resource no longer available (HTTP 410)',
+      429: 'Too many requests / rate limited (HTTP 429)',
+      500: 'Internal server error (HTTP 500)',
+      502: 'Bad gateway (HTTP 502)',
+      503: 'Service unavailable (HTTP 503)',
+      504: 'Gateway timeout (HTTP 504)'
+    }[res.status] || `Server returned HTTP ${res.status}`;
+    throw new Error(msg);
   }
   const contentType = res.headers.get('content-type') || '';
   const total = Number(res.headers.get('content-length')) || 0;
   if (maxBytes > 0 && total > maxBytes * 1024 * 1024) {
-    res.body.cancel().catch(() => {});
+    res.body && res.body.cancel().catch(() => {});
     throw new Error(`File size ${(total / 1024 / 1024).toFixed(1)} MB exceeds the configured limit`);
   }
 
@@ -115,19 +126,42 @@ export async function directDownload(url, destDir, {
   const finalPath = overwrite === 'overwrite' ? path.join(destDir, name) : uniquePath(destDir, name);
   const tmpPath = path.join(destDir, `.${path.basename(finalPath)}.part`);
 
+  // Empty response without body
+  if (!res.body) {
+    fs.writeFileSync(finalPath, Buffer.alloc(0));
+    onProgress?.({ received: 0, total: total || 0, speed: 0, pct: 1, done: true, kind: detected ? detected.kind : 'file' });
+    return { path: finalPath, bytes: 0, contentType };
+  }
+
   let received = 0;
   let lastTick = Date.now();
   let lastBytes = 0;
   let speed = 0;
   let out = null;
   let reader = null;
+  let streamErr = null;
 
-  const onAbort = () => {
+  const cleanupTmp = async () => {
     try { reader?.cancel().catch(() => {}); } catch {}
-    try { out?.destroy(); } catch {}
+    if (out) {
+      await new Promise((resolve) => {
+        if (out.destroyed || out.closed) return resolve();
+        out.once('close', resolve);
+        out.destroy();
+      });
+    }
     try {
       if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
-    } catch {}
+    } catch {
+      await new Promise((r) => setTimeout(r, 40));
+      try {
+        if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+      } catch {}
+    }
+  };
+
+  const onAbort = () => {
+    cleanupTmp().catch(() => {});
   };
 
   if (signal) {
@@ -136,16 +170,22 @@ export async function directDownload(url, destDir, {
 
   try {
     out = fs.createWriteStream(tmpPath);
+    out.on('error', (err) => {
+      streamErr = err;
+    });
+
     reader = res.body.getReader();
     for (;;) {
       if (signal?.aborted) {
         throw new Error('Download cancelled');
       }
+      if (streamErr) throw streamErr;
       const { done, value } = await reader.read();
       if (done) break;
       if (signal?.aborted) {
         throw new Error('Download cancelled');
       }
+      if (streamErr) throw streamErr;
       received += value.byteLength;
       if (maxBytes > 0 && received > maxBytes * 1024 * 1024) {
         throw new Error('File size exceeds the configured limit');
@@ -167,13 +207,26 @@ export async function directDownload(url, destDir, {
         });
       }
     }
-    await new Promise((r, j) => out.end(() => r(), j));
+    if (streamErr) throw streamErr;
+    await new Promise((resolve, reject) => {
+      out.once('finish', resolve);
+      out.once('error', reject);
+      out.end();
+    });
   } catch (err) {
-    onAbort();
+    await cleanupTmp();
     if (signal?.aborted || /abort|cancel/i.test(err?.message)) {
       const cancelErr = new Error('Download cancelled');
       cancelErr.name = 'AbortError';
       throw cancelErr;
+    }
+    if (
+      /terminated|socket|econnreset|broken pipe|premature close/i.test(err?.message) ||
+      /socket|econnreset|terminated/i.test(err?.cause?.message)
+    ) {
+      const netErr = new Error('Connection interrupted: remote server closed the connection unexpectedly');
+      netErr.cause = err;
+      throw netErr;
     }
     throw err;
   } finally {
