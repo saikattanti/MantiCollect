@@ -128,7 +128,9 @@ export function createQueue({
   function persist(id, fields) {
     const sets = Object.keys(fields).map((k) => `${k} = ?`);
     if (!sets.length) return;
-    db().prepare(`UPDATE jobs SET ${sets.join(', ')} WHERE id = ?`).run(...Object.values(fields), id);
+    try {
+      db().prepare(`UPDATE jobs SET ${sets.join(', ')} WHERE id = ?`).run(...Object.values(fields), id);
+    } catch {}
   }
 
   function throttleDb(id) {

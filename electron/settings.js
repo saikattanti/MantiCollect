@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { randomBytes } from 'node:crypto';
 import electron from 'electron';
 
 const { app } = typeof electron === 'object' && electron ? electron : { app: null };
@@ -16,7 +17,12 @@ export const DEFAULTS = {
   allowLocalNetwork: false,
   probeTimeoutMs: 30000,
   maxConnectionsPerDownload: 4,
-  segmentedDownloads: true
+  segmentedDownloads: true,
+  browserIntegrationEnabled: true,
+  browserBridgePort: 52443,
+  browserAuthToken: '',
+  clipboardDetection: false,
+  downloadInterception: false
 };
 
 let cache = null;
@@ -33,7 +39,15 @@ export function loadSettings() {
   } catch {
     cache = { ...DEFAULTS };
   }
+  if (!cache.browserAuthToken) {
+    cache.browserAuthToken = randomBytes(32).toString('hex');
+  }
   return { ...cache };
+}
+
+export function regenerateBrowserAuthToken() {
+  const token = randomBytes(32).toString('hex');
+  return saveSettings({ browserAuthToken: token });
 }
 
 export function saveSettings(patch) {
