@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { resolveProvider, directDownload, DIRECT, allProviders } from './providers/registry.js';
+import { segmentedDownload } from './providers/segmented.js';
 import { loadSettings } from './settings.js';
 import { ffmpegDirectory, resolveYtDlp } from './bins.js';
 import { assertPublicUrl } from './security.js';
@@ -82,7 +83,18 @@ export function executeJob(job, hooks = {}) {
         if (handle.paused) {
           return { paused: true, path: job.partial_path, bytes: job.bytes_done || 0 };
         }
-        return directDownload(job.url, destDir, {
+
+        let existingPlan = null;
+        try {
+          if (job.segment_plan) existingPlan = JSON.parse(job.segment_plan);
+        } catch {}
+
+        const wantsSegmented =
+          settings.segmentedDownloads !== false &&
+          (job.is_segmented === 1 || existingPlan != null || (!job.bytes_done && job.is_segmented !== 0));
+        const connections = Math.min(8, Math.max(1, Number(settings.maxConnectionsPerDownload) || 4));
+
+        const directOpts = {
           allowLocal: ctx.allowLocal,
           maxBytes: ctx.maxBytes,
           overwrite: settings.overwrite,
@@ -98,7 +110,22 @@ export function executeJob(job, hooks = {}) {
           onProgress: (p) => {
             if (!handle.cancelled && !handle.paused) hooks.onProgress?.(p);
           }
-        });
+        };
+
+        if (wantsSegmented && connections > 1) {
+          return segmentedDownload(job.url, destDir, {
+            ...directOpts,
+            connections,
+            plan: existingPlan
+          }).then((res) => {
+            if (res?.fallbackToSingle) {
+              return directDownload(job.url, destDir, directOpts);
+            }
+            return res;
+          });
+        }
+
+        return directDownload(job.url, destDir, directOpts);
       })
       .then((r) => r);
 
