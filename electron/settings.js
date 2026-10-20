@@ -22,7 +22,9 @@ export const DEFAULTS = {
   browserBridgePort: 52443,
   browserAuthToken: '',
   clipboardDetection: false,
-  downloadInterception: false
+  downloadInterception: false,
+  globalUploadLimitKBps: 0,
+  perTaskUploadLimitKBps: 0
 };
 
 let cache = null;

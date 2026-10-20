@@ -109,6 +109,42 @@ CREATE TABLE IF NOT EXISTS conversions (
   finished_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_conversions_status ON conversions(status);
+
+CREATE TABLE IF NOT EXISTS storage_connections (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  provider_type TEXT NOT NULL,
+  host TEXT,
+  port INTEGER,
+  base_path TEXT,
+  username TEXT,
+  credential_ref TEXT,
+  host_key_fingerprint TEXT,
+  allow_insecure_http INTEGER DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  last_success_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_storage_conns_type ON storage_connections(provider_type);
+
+CREATE TABLE IF NOT EXISTS storage_uploads (
+  id TEXT PRIMARY KEY,
+  source_path TEXT NOT NULL,
+  connection_id TEXT NOT NULL REFERENCES storage_connections(id) ON DELETE CASCADE,
+  remote_path TEXT NOT NULL,
+  status TEXT NOT NULL,
+  bytes_done INTEGER DEFAULT 0,
+  bytes_total INTEGER,
+  speed REAL DEFAULT 0,
+  retry_count INTEGER DEFAULT 0,
+  error_code TEXT,
+  error_message TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  finished_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_storage_uploads_status ON storage_uploads(status);
+CREATE INDEX IF NOT EXISTS idx_storage_uploads_conn ON storage_uploads(connection_id);
 `;
 
 /** Pure migration; usable from tests with an in-memory DB. */
