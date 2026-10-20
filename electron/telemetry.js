@@ -99,6 +99,7 @@ export function createTelemetryTracker() {
       currentSpeed: null,
       avgSpeed: null,
       etaSeconds: null,
+      activeConnections: opts.activeConnections || null,
       samples: [], // [{ timestamp, speed }]
       lastSampleTime: 0
     });
@@ -108,6 +109,7 @@ export function createTelemetryTracker() {
     let bytesDone = null;
     let bytesTotal = null;
     let providerSpeed = null;
+    let activeConnections = null;
     let timestamp = Date.now();
 
     if (typeof opts === 'number' || arguments.length > 2) {
@@ -119,13 +121,18 @@ export function createTelemetryTracker() {
       bytesDone = opts.bytesDone ?? null;
       bytesTotal = opts.bytesTotal ?? null;
       providerSpeed = opts.providerSpeed ?? null;
+      activeConnections = opts.activeConnections ?? null;
       timestamp = opts.timestamp ?? Date.now();
     }
 
     let state = jobs.get(id);
     if (!state) {
-      start(id, { bytesTotal, initialBytes: bytesDone || 0, startedAt: timestamp });
+      start(id, { bytesTotal, initialBytes: bytesDone || 0, startedAt: timestamp, activeConnections });
       state = jobs.get(id);
+    }
+
+    if (activeConnections != null) {
+      state.activeConnections = activeConnections;
     }
 
     if (bytesTotal != null && bytesTotal > 0) {
@@ -201,6 +208,7 @@ export function createTelemetryTracker() {
       totalBytes: state.bytesTotal,
       remainingBytes: remaining,
       etaSeconds: state.etaSeconds,
+      activeConnections: state.activeConnections ?? null,
       speedHistory: state.samples.map((s) => ({ timestamp: s.timestamp, speed: s.speed })),
       progressPercent: calculateProgressPercent(state.bytesDone, state.bytesTotal)
     };
@@ -216,6 +224,7 @@ export function createTelemetryTracker() {
     }
     state.currentSpeed = 0;
     state.etaSeconds = 0;
+    state.activeConnections = 0;
     // Keep history snapshot until remove is called
   }
 
@@ -224,6 +233,7 @@ export function createTelemetryTracker() {
     if (!state) return;
     state.currentSpeed = null;
     state.etaSeconds = null;
+    state.activeConnections = 0;
     state.samples = [];
   }
 
