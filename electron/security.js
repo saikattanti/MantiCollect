@@ -7,8 +7,9 @@ export const MEDIA_EXTENSIONS = {
   image: ['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'bmp', 'svg', 'tiff', 'tif', 'heic', 'heif'],
   video: ['mp4', 'webm', 'mov', 'mkv', 'm4v', 'avi', 'flv', 'ts', 'mpg', 'mpeg', '3gp'],
   audio: ['mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'opus', 'oga', 'm4b', 'wma', 'aiff', 'aif', 'mid', 'midi'],
-  archive: ['zip', '7z', 'rar'],
-  document: ['pdf', 'txt', 'md', 'csv', 'json', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx']
+  archive: ['zip', '7z', 'rar', 'tar', 'gz', 'bz2', 'xz'],
+  document: ['pdf', 'txt', 'md', 'csv', 'json', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'],
+  binary: ['bin', 'iso', 'exe', 'dmg', 'apk']
 };
 
 export function extensionKind(url) {
