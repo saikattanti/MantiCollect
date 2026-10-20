@@ -85,9 +85,16 @@ export const DIRECT = {
  */
 export async function directDownload(url, destDir, {
   onProgress,
+  onMetadata,
   allowLocal = false,
   maxBytes = 0,
   signal,
+  pauseSignal,
+  isResume = false,
+  partialPath = null,
+  etag = null,
+  lastModified = null,
+  preservePartialOnError = false,
   overwrite = 'avoid',
   filename
 } = {}) {
@@ -96,15 +103,68 @@ export async function directDownload(url, destDir, {
     err.name = 'AbortError';
     throw err;
   }
+  if (pauseSignal?.aborted) {
+    return { paused: true, path: partialPath, bytes: 0, resumable: true };
+  }
 
-  const res = await fetchWithSafeRedirects(url, { allowLocal, signal });
-  if (res.status !== 200) {
+  // Determine existing partial file offset if resuming
+  let offset = 0;
+  let tmpPath = null;
+  let finalPath = null;
+
+  if (partialPath && fs.existsSync(partialPath)) {
+    try {
+      offset = fs.statSync(partialPath).size;
+      tmpPath = partialPath;
+      const baseName = path.basename(tmpPath).replace(/^\./, '').replace(/\.part$/, '');
+      finalPath = path.join(destDir, baseName);
+    } catch {
+      offset = 0;
+      tmpPath = null;
+    }
+  }
+
+  // Prepare initial request headers
+  const reqHeaders = {};
+  if (isResume && offset > 0) {
+    reqHeaders['Range'] = `bytes=${offset}-`;
+    if (etag) {
+      reqHeaders['If-Range'] = etag;
+    } else if (lastModified) {
+      reqHeaders['If-Range'] = lastModified;
+    }
+  }
+
+  let res = await fetchWithSafeRedirects(url, { headers: reqHeaders, allowLocal, signal });
+
+  // Handle Range Not Satisfiable (416) or mismatched Content-Range: restart from 0
+  function parseContentRange(cr) {
+    if (!cr) return null;
+    const m = /bytes\s+(\d+)-(\d+)\/(\d+|\*)/i.exec(cr);
+    if (!m) return null;
+    return { start: Number(m[1]), end: Number(m[2]), total: m[3] !== '*' ? Number(m[3]) : null };
+  }
+
+  const cr = parseContentRange(res.headers.get('content-range'));
+
+  // If server returned 416 or returned 206 with wrong offset, cancel and restart from 0 cleanly
+  if (offset > 0 && (res.status === 416 || (res.status === 206 && (!cr || cr.start !== offset)))) {
+    if (res.body) await res.body.cancel().catch(() => {});
+    if (tmpPath && fs.existsSync(tmpPath)) {
+      try { fs.writeFileSync(tmpPath, Buffer.alloc(0)); } catch {}
+    }
+    offset = 0;
+    res = await fetchWithSafeRedirects(url, { allowLocal, signal });
+  }
+
+  if (res.status !== 200 && res.status !== 206) {
     if (res.body) res.body.cancel().catch(() => {});
     const msg = {
       401: 'Authentication required (HTTP 401)',
       403: 'Access forbidden by server (HTTP 403)',
       404: 'File not found on server (HTTP 404)',
       410: 'Resource no longer available (HTTP 410)',
+      416: 'Range not satisfiable (HTTP 416)',
       429: 'Too many requests / rate limited (HTTP 429)',
       500: 'Internal server error (HTTP 500)',
       502: 'Bad gateway (HTTP 502)',
@@ -113,18 +173,42 @@ export async function directDownload(url, destDir, {
     }[res.status] || `Server returned HTTP ${res.status}`;
     throw new Error(msg);
   }
+
   const contentType = res.headers.get('content-type') || '';
-  const total = Number(res.headers.get('content-length')) || 0;
-  if (maxBytes > 0 && total > maxBytes * 1024 * 1024) {
+  const currentEtag = res.headers.get('etag') || etag || null;
+  const currentLastModified = res.headers.get('last-modified') || lastModified || null;
+  const acceptRanges = res.headers.get('accept-ranges') || '';
+  const isResumable = res.status === 206 || /bytes/i.test(acceptRanges) || !!currentEtag;
+
+  // Determine total bytes
+  let total = null;
+  if (res.status === 206 && cr && cr.total != null) {
+    total = cr.total;
+  } else if (res.headers.get('content-length')) {
+    const cl = Number(res.headers.get('content-length'));
+    total = res.status === 206 ? offset + cl : cl;
+  }
+
+  if (maxBytes > 0 && total && total > maxBytes * 1024 * 1024) {
     res.body && res.body.cancel().catch(() => {});
     throw new Error(`File size ${(total / 1024 / 1024).toFixed(1)} MB exceeds the configured limit`);
   }
 
   const detected = extensionKind(url);
-  let name = filename || guessName(url, contentType);
-  name = sanitizeFilename(name);
-  const finalPath = overwrite === 'overwrite' ? path.join(destDir, name) : uniquePath(destDir, name);
-  const tmpPath = path.join(destDir, `.${path.basename(finalPath)}.part`);
+  if (!finalPath) {
+    let name = filename || guessName(url, contentType);
+    name = sanitizeFilename(name);
+    finalPath = overwrite === 'overwrite' ? path.join(destDir, name) : uniquePath(destDir, name);
+    tmpPath = path.join(destDir, `.${path.basename(finalPath)}.part`);
+  }
+
+  onMetadata?.({
+    etag: currentEtag,
+    lastModified: currentLastModified,
+    resumable: isResumable,
+    total,
+    partialPath: tmpPath
+  });
 
   // Empty response without body
   if (!res.body) {
@@ -133,15 +217,19 @@ export async function directDownload(url, destDir, {
     return { path: finalPath, bytes: 0, contentType };
   }
 
-  let received = 0;
+  // Choose file open mode:
+  // ONLY append ('a') if server returned HTTP 206 with a matching Content-Range start!
+  // If server returned HTTP 200, it sent the complete representation, so truncate ('w')!
+  const isAppending = res.status === 206 && cr && cr.start === offset && offset > 0;
+  let received = isAppending ? offset : 0;
   let lastTick = Date.now();
-  let lastBytes = 0;
+  let lastBytes = received;
   let speed = 0;
   let out = null;
   let reader = null;
   let streamErr = null;
 
-  const cleanupTmp = async () => {
+  const cleanupTmp = async (unlink = true) => {
     try { reader?.cancel().catch(() => {}); } catch {}
     if (out) {
       await new Promise((resolve) => {
@@ -150,13 +238,15 @@ export async function directDownload(url, destDir, {
         out.destroy();
       });
     }
-    try {
-      if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
-    } catch {
-      await new Promise((r) => setTimeout(r, 40));
+    if (unlink) {
       try {
         if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
-      } catch {}
+      } catch {
+        await new Promise((r) => setTimeout(r, 40));
+        try {
+          if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+        } catch {}
+      }
     }
   };
 
@@ -169,7 +259,7 @@ export async function directDownload(url, destDir, {
   }
 
   try {
-    out = fs.createWriteStream(tmpPath);
+    out = fs.createWriteStream(tmpPath, { flags: isAppending ? 'a' : 'w' });
     out.on('error', (err) => {
       streamErr = err;
     });
@@ -179,13 +269,20 @@ export async function directDownload(url, destDir, {
       if (signal?.aborted) {
         throw new Error('Download cancelled');
       }
+      if (pauseSignal?.aborted) {
+        break;
+      }
       if (streamErr) throw streamErr;
       const { done, value } = await reader.read();
       if (done) break;
       if (signal?.aborted) {
         throw new Error('Download cancelled');
       }
+      if (pauseSignal?.aborted) {
+        break;
+      }
       if (streamErr) throw streamErr;
+
       received += value.byteLength;
       if (maxBytes > 0 && received > maxBytes * 1024 * 1024) {
         throw new Error('File size exceeds the configured limit');
@@ -197,7 +294,7 @@ export async function directDownload(url, destDir, {
         lastBytes = received;
       }
       if (!out.write(Buffer.from(value))) await new Promise((r) => out.once('drain', r));
-      if (!signal?.aborted) {
+      if (!signal?.aborted && !pauseSignal?.aborted) {
         onProgress?.({
           received,
           total: total > 0 ? total : null,
@@ -214,7 +311,9 @@ export async function directDownload(url, destDir, {
       out.end();
     });
   } catch (err) {
-    await cleanupTmp();
+    if (!pauseSignal?.aborted) {
+      await cleanupTmp(!preservePartialOnError);
+    }
     if (signal?.aborted || /abort|cancel/i.test(err?.message)) {
       const cancelErr = new Error('Download cancelled');
       cancelErr.name = 'AbortError';
@@ -242,6 +341,24 @@ export async function directDownload(url, destDir, {
     throw cancelErr;
   }
 
+  // If paused, keep .part file on disk and return paused status with authoritative size
+  if (pauseSignal?.aborted) {
+    if (reader) {
+      try { await reader.cancel(); } catch {}
+    }
+    const actualBytes = fs.existsSync(tmpPath) ? fs.statSync(tmpPath).size : received;
+    return {
+      paused: true,
+      path: tmpPath,
+      bytes: actualBytes,
+      contentType,
+      etag: currentEtag,
+      lastModified: currentLastModified,
+      resumable: isResumable
+    };
+  }
+
+  // Atomically move the completed temporary file to the final destination
   fs.renameSync(tmpPath, finalPath);
   onProgress?.({ received, total: total || received, speed: 0, pct: 1, done: true, kind: detected ? detected.kind : 'file' });
   return { path: finalPath, bytes: received, contentType };

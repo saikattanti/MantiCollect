@@ -35,4 +35,4 @@ export function capabilityMatrix() {
   return allProviders().map((p) => p.getCapabilities());
 }
 
-export { directDownload };
+export { directDownload, DIRECT };
