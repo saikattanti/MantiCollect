@@ -17,6 +17,8 @@ export const api = {
   jobs: {
     list: () => invoke('jobs:list'),
     start: (p) => invoke('jobs:start', p),
+    pause: (id) => invoke('jobs:pause', { id }),
+    resume: (id) => invoke('jobs:resume', { id }),
     cancel: (id) => invoke('jobs:cancel', { id }),
     retry: (id) => invoke('jobs:retry', { id }),
     remove: (id) => invoke('jobs:remove', { id }),

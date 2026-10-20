@@ -112,6 +112,8 @@ export function registerIpc({ getQueue, getWindow }) {
     return { id };
   });
 
+  handle('jobs:pause', async (p) => getQueue().pauseJob(requireString(p.id, 'id', 64)));
+  handle('jobs:resume', async (p) => getQueue().resumeJob(requireString(p.id, 'id', 64)));
   handle('jobs:cancel', async (p) => getQueue().cancelJob(requireString(p.id, 'id', 64)));
   handle('jobs:retry', async (p) => getQueue().retryJob(requireString(p.id, 'id', 64)));
   handle('jobs:remove', async (p) => getQueue().removeJob(requireString(p.id, 'id', 64)));

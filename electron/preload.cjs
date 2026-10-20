@@ -5,6 +5,8 @@ const INVOKE_CHANNELS = new Set([
   'probe',
   'jobs:list',
   'jobs:start',
+  'jobs:pause',
+  'jobs:resume',
   'jobs:cancel',
   'jobs:retry',
   'jobs:remove',
