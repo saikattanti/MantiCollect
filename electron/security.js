@@ -52,12 +52,15 @@ export function sanitizeFilename(name, { maxLength = 150, fallback = 'untitled' 
 /** Return a path that does not exist yet, appending " (n)" when needed. */
 export function uniquePath(dir, filename) {
   const p = path.join(dir, filename);
-  if (!fs.existsSync(p)) return p;
+  const part = path.join(dir, `.${filename}.part`);
+  if (!fs.existsSync(p) && !fs.existsSync(part)) return p;
   const ext = path.extname(filename);
   const base = (filename.length > ext.length ? filename.slice(0, filename.length - ext.length) : 'untitled') || 'untitled';
   for (let i = 1; i < 10000; i++) {
-    const candidate = path.join(dir, `${base} (${i})${ext}`);
-    if (!fs.existsSync(candidate)) return candidate;
+    const candidateName = `${base} (${i})${ext}`;
+    const candidate = path.join(dir, candidateName);
+    const candidatePart = path.join(dir, `.${candidateName}.part`);
+    if (!fs.existsSync(candidate) && !fs.existsSync(candidatePart)) return candidate;
   }
   throw new Error('Could not find a unique file name');
 }
