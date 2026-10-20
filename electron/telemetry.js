@@ -175,7 +175,7 @@ export function createTelemetryTracker() {
     state.avgSpeed = calculateAverageSpeed(transferred, elapsedTotalMs);
 
     // Calculate ETA
-    const remaining = state.bytesTotal != null && state.bytesTotal > state.bytesDone ? state.bytesTotal - state.bytesDone : null;
+    const remaining = state.bytesTotal != null ? Math.max(0, state.bytesTotal - state.bytesDone) : null;
     state.etaSeconds = calculateEta(remaining, state.currentSpeed);
   }
 
