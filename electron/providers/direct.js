@@ -128,10 +128,13 @@ export async function directDownload(url, destDir, {
   const reqHeaders = {};
   if (isResume && offset > 0) {
     reqHeaders['Range'] = `bytes=${offset}-`;
-    if (etag) {
-      reqHeaders['If-Range'] = etag;
+    // RFC 9110 Section 13.1.2: Origin servers MUST NOT evaluate an If-Range header
+    // with a weak entity tag (prefixed by W/). Use Last-Modified if ETag is weak.
+    const isWeakEtag = typeof etag === 'string' && /^W\//i.test(etag.trim());
+    if (etag && !isWeakEtag) {
+      reqHeaders['If-Range'] = etag.trim();
     } else if (lastModified) {
-      reqHeaders['If-Range'] = lastModified;
+      reqHeaders['If-Range'] = lastModified.trim();
     }
   }
 
@@ -146,9 +149,13 @@ export async function directDownload(url, destDir, {
   }
 
   const cr = parseContentRange(res.headers.get('content-range'));
+  const resEtag = res.headers.get('etag');
+  const etagMismatch = !!(etag && resEtag && !/^W\//i.test(etag) && !/^W\//i.test(resEtag) && etag.trim() !== resEtag.trim());
+  const resLastModified = res.headers.get('last-modified');
+  const modMismatch = !!(lastModified && resLastModified && lastModified.trim() !== resLastModified.trim());
 
-  // If server returned 416 or returned 206 with wrong offset, cancel and restart from 0 cleanly
-  if (offset > 0 && (res.status === 416 || (res.status === 206 && (!cr || cr.start !== offset)))) {
+  // If server returned 416, or returned 206 with wrong offset or changed validator: cancel and restart from 0 cleanly
+  if (offset > 0 && (res.status === 416 || etagMismatch || modMismatch || (res.status === 206 && (!cr || cr.start !== offset)))) {
     if (res.body) await res.body.cancel().catch(() => {});
     if (tmpPath && fs.existsSync(tmpPath)) {
       try { fs.writeFileSync(tmpPath, Buffer.alloc(0)); } catch {}
@@ -310,6 +317,11 @@ export async function directDownload(url, destDir, {
       out.once('error', reject);
       out.end();
     });
+
+    // Verify completeness: if total size was known, received must match total
+    if (!pauseSignal?.aborted && !signal?.aborted && total > 0 && received < total) {
+      throw new Error(`Incomplete download: received ${received} of ${total} bytes from server`);
+    }
   } catch (err) {
     if (!pauseSignal?.aborted) {
       await cleanupTmp(!preservePartialOnError);
@@ -356,6 +368,14 @@ export async function directDownload(url, destDir, {
       lastModified: currentLastModified,
       resumable: isResumable
     };
+  }
+
+  // Final sanity check before atomic rename: file must exist and match total if known
+  if (fs.existsSync(tmpPath)) {
+    const finalSize = fs.statSync(tmpPath).size;
+    if (total > 0 && finalSize !== total) {
+      throw new Error(`Integrity check failed: file size ${finalSize} does not match expected size ${total}`);
+    }
   }
 
   // Atomically move the completed temporary file to the final destination

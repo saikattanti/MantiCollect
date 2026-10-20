@@ -619,6 +619,18 @@ export default function QueuePage() {
                             <FolderOpen style={{ width: 14, height: 14 }} />
                           </Button>
                         )}
+                        {j.status === 'failed' && j.resumable && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => act(api.jobs.resume, j.id, 'Resuming download')}
+                            title="Resume from partial file"
+                            aria-label="Resume from partial file"
+                            className="h-8 w-8 p-0 text-accent-text hover:text-accent-text"
+                          >
+                            <Play style={{ width: 14, height: 14 }} />
+                          </Button>
+                        )}
                         {['failed', 'cancelled'].includes(j.status) && (
                           <Button
                             variant="ghost"

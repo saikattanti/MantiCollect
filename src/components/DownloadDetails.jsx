@@ -118,7 +118,7 @@ export default function DownloadDetails({
               <Pause style={{ width: 14, height: 14 }} className="animate-spin" /> Pausing…
             </Button>
           )}
-          {job.status === 'paused' && (
+          {(job.status === 'paused' || (job.status === 'failed' && job.resumable)) && (
             <Button variant="primary" size="sm" onClick={() => onResume?.(job.id)}>
               <Play style={{ width: 14, height: 14 }} /> Resume
             </Button>

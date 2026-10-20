@@ -221,6 +221,12 @@ export function createQueue({
       if (fs.existsSync(validPath)) {
         try {
           validBytes = fs.statSync(validPath).size;
+          // Corrupted partial file larger than expected total
+          if (row.bytes_total > 0 && validBytes > row.bytes_total) {
+            validBytes = 0;
+            try { fs.unlinkSync(validPath); } catch {}
+            validPath = null;
+          }
         } catch {
           validBytes = 0;
         }
@@ -430,6 +436,28 @@ export function createQueue({
 
   /** On startup: interrupted jobs go back to waiting so users can resume. */
   function recover() {
+    const interrupted = db()
+      .prepare(`SELECT id, partial_path, bytes_total FROM jobs WHERE status IN ('fetching_metadata', 'downloading', 'processing', 'pausing', 'resuming')`)
+      .all();
+    for (const job of interrupted) {
+      let validBytes = 0;
+      let validPath = job.partial_path;
+      if (validPath && fs.existsSync(validPath)) {
+        try {
+          validBytes = fs.statSync(validPath).size;
+          if (job.bytes_total > 0 && validBytes > job.bytes_total) {
+            validBytes = 0;
+            try { fs.unlinkSync(validPath); } catch {}
+            validPath = null;
+          }
+        } catch {
+          validBytes = 0;
+        }
+      } else {
+        validPath = null;
+      }
+      persist(job.id, { bytes_done: validBytes, partial_path: validPath });
+    }
     const r = db()
       .prepare(`UPDATE jobs SET status = 'waiting', error = NULL WHERE status IN ('fetching_metadata', 'downloading', 'processing', 'pausing', 'resuming')`)
       .run();
