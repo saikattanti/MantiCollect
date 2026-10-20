@@ -1,0 +1,479 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* =====================================================================
+   MediaVault design tokens
+   Semantic, themeable variables. Components use the Tailwind utilities
+   mapped below (bg-surface, text-t2, border-line, bg-accent …) — never
+   raw hex values — so themes switch as a unit.
+   ===================================================================== */
+
+:root,
+:root[data-theme="dark"] {
+  /* surfaces */
+  --mv-bg: #0b0d12;
+  --mv-bg-elev: #11141c;
+  --mv-surface: #131722;
+  --mv-surface-2: #181d2b;
+  --mv-glass: rgba(17, 21, 31, 0.78);
+  --mv-highlight: rgba(255, 255, 255, 0.065);
+  --mv-shadow-card: 0 2px 8px -2px rgba(0, 0, 0, 0.6), 0 16px 36px -12px rgba(0, 0, 0, 0.7);
+  --mv-shadow-pop: 0 20px 60px -16px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.08);
+
+  /* text */
+  --mv-text-1: #f8fafc;
+  --mv-text-2: #a9b3c4;
+  --mv-text-3: #6c7789;
+
+  /* lines */
+  --mv-border: rgba(255, 255, 255, 0.08);
+  --mv-border-strong: rgba(255, 255, 255, 0.16);
+
+  /* accent — refined electric indigo */
+  --mv-accent: #6366f1;
+  --mv-accent-2: #8b5cf6;
+  --mv-accent-soft: rgba(99, 102, 241, 0.14);
+  --mv-accent-text: #a5b4fc;
+
+  /* status */
+  --mv-ok: #34d399;
+  --mv-warn: #fbbf24;
+  --mv-err: #f87171;
+  --mv-info: #38bdf8;
+
+  /* radii */
+  --mv-radius-md: 10px;
+  --mv-radius-lg: 14px;
+  --mv-radius-xl: 18px;
+  --mv-radius-2xl: 22px;
+
+  /* motion */
+  --mv-dur: 180ms;
+  --mv-dur-slow: 320ms;
+  --mv-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* ambient light behind content */
+  --mv-ambient-1: rgba(99, 102, 241, 0.075);
+  --mv-ambient-2: rgba(139, 92, 246, 0.055);
+}
+
+:root[data-theme="light"] {
+  --mv-bg: #f1f4f9;
+  --mv-bg-elev: #f8fafd;
+  --mv-surface: #ffffff;
+  --mv-surface-2: #e9eef5;
+  --mv-glass: rgba(255, 255, 255, 0.84);
+  --mv-highlight: rgba(255, 255, 255, 0.9);
+  --mv-shadow-card: 0 1px 3px rgba(15, 23, 42, 0.06), 0 12px 24px -10px rgba(15, 23, 42, 0.09);
+  --mv-shadow-pop: 0 20px 48px -12px rgba(15, 23, 42, 0.14), 0 0 0 1px rgba(15, 23, 42, 0.06);
+
+  --mv-text-1: #0f172a;
+  --mv-text-2: #475569;
+  --mv-text-3: #64748b;
+
+  --mv-border: rgba(15, 23, 42, 0.11);
+  --mv-border-strong: rgba(15, 23, 42, 0.22);
+
+  --mv-accent: #4f46e5;
+  --mv-accent-2: #7c3aed;
+  --mv-accent-soft: rgba(79, 70, 229, 0.1);
+  --mv-accent-text: #4338ca;
+
+  --mv-ok: #059669;
+  --mv-warn: #d97706;
+  --mv-err: #dc2626;
+  --mv-info: #0284c7;
+
+  --mv-ambient-1: rgba(79, 70, 229, 0.06);
+  --mv-ambient-2: rgba(124, 58, 237, 0.045);
+}
+
+/* map semantic tokens -> Tailwind utilities */
+@theme inline {
+  --font-sans: "Segoe UI Variable Text", "Segoe UI", "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+
+  --color-bg: var(--mv-bg);
+  --color-bg-elev: var(--mv-bg-elev);
+  --color-surface: var(--mv-surface);
+  --color-surface-2: var(--mv-surface-2);
+  --color-glass: var(--mv-glass);
+  --color-t1: var(--mv-text-1);
+  --color-t2: var(--mv-text-2);
+  --color-t3: var(--mv-text-3);
+  --color-line: var(--mv-border);
+  --color-line-strong: var(--mv-border-strong);
+  --color-accent: var(--mv-accent);
+  --color-accent-2: var(--mv-accent-2);
+  --color-accent-soft: var(--mv-accent-soft);
+  --color-accent-text: var(--mv-accent-text);
+  --color-ok: var(--mv-ok);
+  --color-warn: var(--mv-warn);
+  --color-err: var(--mv-err);
+  --color-info: var(--mv-info);
+
+  --radius-md: var(--mv-radius-md);
+  --radius-lg: var(--mv-radius-lg);
+  --radius-xl: var(--mv-radius-xl);
+  --radius-2xl: var(--mv-radius-2xl);
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+html {
+  background-color: var(--mv-bg);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/* =====================================================================
+   shadcn/ui component palette, mapped onto the MediaVault data-theme
+   system (shadcn's stock :root/.dark blocks are replaced so both themes
+   follow the same attribute the rest of the app uses). Values are
+   harmonized with the --mv-* tokens above.
+   ===================================================================== */
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #0b0d12;
+  --foreground: #f8fafc;
+  --card: #131722;
+  --card-foreground: #f8fafc;
+  --popover: #131722;
+  --popover-foreground: #f8fafc;
+  --primary: #6366f1;
+  --primary-foreground: #ffffff;
+  --secondary: #181d2b;
+  --secondary-foreground: #f8fafc;
+  --muted: #181d2b;
+  --muted-foreground: #a9b3c4;
+  --accent: #1c2236;
+  --accent-foreground: #f8fafc;
+  --destructive: #b91c1c;
+  --border: rgba(255, 255, 255, 0.08);
+  --input: rgba(255, 255, 255, 0.14);
+  --ring: #6366f1;
+  --chart-1: #6366f1;
+  --chart-2: #8b5cf6;
+  --chart-3: #34d399;
+  --chart-4: #fbbf24;
+  --chart-5: #38bdf8;
+  --radius: 0.875rem;
+  --sidebar: #0f121a;
+  --sidebar-foreground: #f8fafc;
+  --sidebar-primary: #6366f1;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #1c2236;
+  --sidebar-accent-foreground: #f8fafc;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-ring: #6366f1;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --background: #f1f4f9;
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --popover: #ffffff;
+  --popover-foreground: #0f172a;
+  --primary: #4f46e5;
+  --primary-foreground: #ffffff;
+  --secondary: #e9eef5;
+  --secondary-foreground: #0f172a;
+  --muted: #e9eef5;
+  --muted-foreground: #475569;
+  --accent: #e0e7ff;
+  --accent-foreground: #0f172a;
+  --destructive: #dc2626;
+  --border: rgba(15, 23, 42, 0.11);
+  --input: rgba(15, 23, 42, 0.18);
+  --ring: #4f46e5;
+  --chart-1: #4f46e5;
+  --chart-2: #7c3aed;
+  --chart-3: #059669;
+  --chart-4: #d97706;
+  --chart-5: #0284c7;
+  --radius: 0.875rem;
+  --sidebar: #f8fafd;
+  --sidebar-foreground: #0f172a;
+  --sidebar-primary: #4f46e5;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e0e7ff;
+  --sidebar-accent-foreground: #0f172a;
+  --sidebar-border: rgba(15, 23, 42, 0.11);
+  --sidebar-ring: #4f46e5;
+}
+
+body {
+  @apply font-sans text-t1 antialiased;
+  background-color: var(--mv-bg);
+  background-image:
+    radial-gradient(1100px 700px at 85% -10%, var(--mv-ambient-1), transparent 60%),
+    radial-gradient(900px 600px at -10% 110%, var(--mv-ambient-2), transparent 60%);
+}
+
+/* ---------- scrollbars ---------- */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--mv-text-2) 25%, transparent) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--mv-text-2) 22%, transparent);
+  border-radius: 8px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--mv-text-2) 40%, transparent);
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---------- window chrome ---------- */
+
+.drag {
+  -webkit-app-region: drag;
+}
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* ---------- materials ---------- */
+
+/* Solid premium surface — the workhorse for readability */
+.card {
+  border-radius: var(--mv-radius-xl);
+  border: 1px solid var(--mv-border);
+  background: var(--mv-surface);
+  box-shadow:
+    inset 0 1px 0 var(--mv-highlight),
+    var(--mv-shadow-card);
+}
+
+.card-hover {
+  transition:
+    border-color var(--mv-dur) var(--mv-ease),
+    transform var(--mv-dur) var(--mv-ease),
+    box-shadow var(--mv-dur) var(--mv-ease);
+}
+.card-hover:hover {
+  border-color: var(--mv-border-strong);
+  transform: translateY(-1.5px);
+  box-shadow:
+    inset 0 1px 0 var(--mv-highlight),
+    0 12px 30px -10px rgba(0, 0, 0, 0.4);
+}
+
+/* Frosted glass — sidebar, floating panels, transient surfaces only */
+.glass {
+  background: var(--mv-glass);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid var(--mv-border);
+  box-shadow:
+    inset 0 1px 0 var(--mv-highlight),
+    var(--mv-shadow-pop);
+}
+
+@supports not (backdrop-filter: blur(10px)) {
+  .glass {
+    background: var(--mv-surface);
+  }
+}
+
+/* Inset well for form areas / code / tables */
+.panel-inset {
+  border-radius: var(--mv-radius-lg);
+  border: 1px solid var(--mv-border);
+  background: color-mix(in srgb, var(--mv-bg-elev) 60%, transparent);
+}
+
+/* Restrained reflective highlight for prominent surfaces */
+.glossy {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.glossy::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.14), transparent 38%, transparent 72%, rgba(255, 255, 255, 0.03));
+  opacity: 0.85;
+}
+.glossy > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* ---------- text helpers ---------- */
+
+.overline {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--mv-text-3);
+}
+
+.text-gradient {
+  background: linear-gradient(92deg, color-mix(in srgb, var(--mv-accent) 80%, white) 0%, var(--mv-accent-2) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* ---------- motion ---------- */
+
+@keyframes mv-shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+.shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.28) 50%, transparent 100%);
+  animation: mv-shimmer 1.5s infinite;
+}
+
+@keyframes mv-pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.pulse-dot {
+  animation: mv-pulse-dot 1.6s ease-in-out infinite;
+}
+
+@keyframes mv-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.fade-up {
+  animation: mv-fade-up 0.28s var(--mv-ease) both;
+}
+
+/* theme switching — only for elements that opt in */
+.theme-anim,
+.card,
+.glass,
+.panel-inset {
+  transition:
+    background-color var(--mv-dur-slow) var(--mv-ease),
+    border-color var(--mv-dur-slow) var(--mv-ease);
+}
+body {
+  transition: background-color var(--mv-dur-slow) var(--mv-ease);
+}
+
+/* ---------- accessibility ---------- */
+
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--mv-accent) 70%, transparent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shimmer::after,
+  .pulse-dot,
+  .fade-up {
+    animation: none !important;
+  }
+  .card-hover,
+  .card-hover:hover {
+    transition: none;
+    transform: none;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+
+/* progress indicator uses the accent gradient (shadcn Progress default is solid) */
+[data-slot='progress-indicator'] {
+  background: linear-gradient(90deg, var(--mv-accent), var(--mv-accent-2));
+}
