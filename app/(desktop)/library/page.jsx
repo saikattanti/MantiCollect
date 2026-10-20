@@ -25,11 +25,15 @@ import {
   Cpu,
   Layers,
   Info,
-  Play
+  Play,
+  CloudUpload,
+  Cloud,
+  Server,
+  HardDrive
 } from 'lucide-react';
 import { api, onEvent } from '@/lib/ipc.js';
 import { formatBytes, formatDate } from '@/lib/format.js';
-import { Button, Card, Input, Select, EmptyState, Spinner, AnimatedDialog, Badge, Progress } from '@/components/ui.jsx';
+import { Button, Card, Input, Label, Select, EmptyState, Spinner, AnimatedDialog, Badge, Progress } from '@/components/ui.jsx';
 
 const CATEGORIES = [
   { id: 'all', label: 'All Files', icon: Layers },
@@ -69,6 +73,15 @@ export default function LibraryPage() {
   const [presets, setPresets] = useState([]);
   const [selectedPreset, setSelectedPreset] = useState('mp4_universal');
   const [convertingJob, setConvertingJob] = useState(null);
+
+  // Phase 8: Remote Upload Modal
+  const [remoteUploadOpen, setRemoteUploadOpen] = useState(false);
+  const [storageConnections, setStorageConnections] = useState([]);
+  const [selectedStorageConnId, setSelectedStorageConnId] = useState('');
+  const [remoteSubdir, setRemoteSubdir] = useState('');
+  const [uploadTasks, setUploadTasks] = useState([]);
+  const [liveUploads, setLiveUploads] = useState({});
+  const [startingUpload, setStartingUpload] = useState(false);
 
   useEffect(() => {
     loadLibrary();
@@ -112,11 +125,24 @@ export default function LibraryPage() {
       }
     });
 
+    const unsubUploadProg = onEvent('upload:progress', (p) => {
+      setLiveUploads((prev) => ({
+        ...prev,
+        [p.id]: { ...(prev[p.id] || {}), ...p }
+      }));
+    });
+
+    const unsubUploadUpd = onEvent('upload:updated', (tasks) => {
+      setUploadTasks(tasks || []);
+    });
+
     return () => {
       unsubZip();
       unsubExport();
       unsubConversionProg();
       unsubConversionUpd();
+      unsubUploadProg();
+      unsubUploadUpd();
     };
   }, []);
 
@@ -372,6 +398,53 @@ export default function LibraryPage() {
     }
   }
 
+  // --- Phase 8: Remote Upload Actions ---
+
+  async function openRemoteUploadModal() {
+    try {
+      const list = await api.storage.connections.list();
+      setStorageConnections(list || []);
+      if (list && list.length > 0 && !selectedStorageConnId) {
+        setSelectedStorageConnId(list[0].id);
+      }
+      setRemoteUploadOpen(true);
+    } catch (err) {
+      toast.error(`Could not load storage connections: ${err.message}`);
+    }
+  }
+
+  async function handleStartRemoteUpload() {
+    if (!selectedStorageConnId) {
+      toast.error('Please select a storage destination');
+      return;
+    }
+    const paths = Array.from(selected);
+    if (!paths.length) return;
+
+    setStartingUpload(true);
+    try {
+      await api.storage.upload.start({
+        connectionId: selectedStorageConnId,
+        sourcePaths: paths,
+        remoteSubdir
+      });
+      toast.success(`Queued ${paths.length} file(s) for remote upload`);
+    } catch (err) {
+      toast.error(`Upload error: ${err.message}`);
+    } finally {
+      setStartingUpload(false);
+    }
+  }
+
+  async function handleCancelUpload(id) {
+    try {
+      await api.storage.upload.cancel(id);
+      toast.info('Upload cancelled');
+    } catch (err) {
+      toast.error(err.message);
+    }
+  }
+
   const items = data?.items || [];
   const counts = data?.counts || { all: 0 };
   const totalBytes = data?.totalBytes || 0;
@@ -503,6 +576,10 @@ export default function LibraryPage() {
 
           <Button size="sm" variant="secondary" onClick={() => setAddToColOpen(true)}>
             <FolderPlus style={{ width: 13, height: 13 }} /> Add to Collection
+          </Button>
+
+          <Button size="sm" variant="secondary" onClick={openRemoteUploadModal}>
+            <CloudUpload style={{ width: 13, height: 13 }} /> Upload to Remote
           </Button>
 
           <Button size="sm" variant="secondary" onClick={zipSelected} disabled={!!zipping}>
@@ -975,6 +1052,156 @@ export default function LibraryPage() {
                 </option>
               ))}
             </Select>
+          )}
+        </div>
+      </AnimatedDialog>
+
+      {/* Phase 8: Remote Upload Dialog */}
+      <AnimatedDialog
+        open={remoteUploadOpen}
+        onClose={() => setRemoteUploadOpen(false)}
+        title="Upload Selected Files to Remote Storage"
+        width={560}
+        footer={
+          <div className="flex w-full items-center justify-between">
+            <Button variant="ghost" size="sm" onClick={() => setRemoteUploadOpen(false)}>
+              Close
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleStartRemoteUpload}
+              disabled={startingUpload || storageConnections.length === 0}
+            >
+              {startingUpload ? <Spinner className="w-3.5 h-3.5" /> : <CloudUpload className="w-3.5 h-3.5" />}
+              <span className="ml-1.5">Start Remote Upload</span>
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <div className="rounded-xl border border-line bg-surface-2/30 p-3">
+            <p className="text-xs text-t2">
+              <span className="font-semibold text-t1">{selected.size} file(s) selected </span>
+              for remote transfer.
+            </p>
+          </div>
+
+          <div>
+            <Label>Target Storage Connection</Label>
+            {storageConnections.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-warn/40 bg-warn/5 p-4 text-center">
+                <p className="text-xs text-warn font-medium">No storage connections configured</p>
+                <p className="text-[11px] text-t3 mt-1">
+                  Configure a WebDAV, SFTP, or Local NAS connection in Settings → Remote Storage first.
+                </p>
+              </div>
+            ) : (
+              <Select
+                value={selectedStorageConnId}
+                onChange={(e) => setSelectedStorageConnId(e.target.value)}
+                className="w-full"
+              >
+                {storageConnections.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({c.provider_type?.replace('_', ' ')?.toUpperCase()}) — {c.host || c.base_path}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </div>
+
+          <div>
+            <Label>Destination Subdirectory (Optional)</Label>
+            <Input
+              value={remoteSubdir}
+              onChange={(e) => setRemoteSubdir(e.target.value)}
+              placeholder="e.g. Media/2026 or backups (leave empty for root base directory)"
+            />
+            <p className="mt-1 text-[11px] text-t3">
+              Subfolder path relative to the remote storage base folder. Will be created automatically if missing.
+            </p>
+          </div>
+
+          {/* Active / Recent Upload Tasks Telemetry */}
+          {uploadTasks.length > 0 && (
+            <div className="space-y-2 pt-2 border-t border-line">
+              <div className="flex items-center justify-between text-xs font-semibold text-t1">
+                <span>Active & Recent Uploads</span>
+                <button
+                  onClick={() => api.storage.upload.clear()}
+                  className="text-[11px] text-t3 hover:text-t1 underline font-normal"
+                >
+                  Clear finished
+                </button>
+              </div>
+
+              <div className="max-h-48 space-y-2 overflow-y-auto pr-1">
+                {uploadTasks.slice(0, 10).map((task) => {
+                  const live = liveUploads[task.id] || {};
+                  const percent = live.percent ?? (task.bytes_total > 0 ? Math.round((task.bytes_done / task.bytes_total) * 100) : 0);
+                  const filename = task.source_path?.split(/[\\/]/).pop();
+                  const isDone = task.status === 'completed';
+                  const isFailed = task.status === 'failed';
+                  const isCancelled = task.status === 'cancelled';
+                  const isUploading = task.status === 'uploading';
+
+                  return (
+                    <div
+                      key={task.id}
+                      className="rounded-lg border border-line bg-surface-2/40 p-2.5 text-xs space-y-1.5"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-mono text-t1 truncate max-w-[280px]" title={filename}>
+                          {filename}
+                        </span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] px-1.5 py-0 ${
+                              isDone
+                                ? 'border-ok/40 text-ok'
+                                : isFailed
+                                ? 'border-err/40 text-err'
+                                : isCancelled
+                                ? 'border-line text-t3'
+                                : 'border-accent/40 text-accent-text'
+                            }`}
+                          >
+                            {task.status}
+                          </Badge>
+                          {isUploading && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-5 px-1 text-[10px]"
+                              onClick={() => handleCancelUpload(task.id)}
+                            >
+                              Cancel
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+
+                      <Progress value={percent} className="h-1.5" />
+
+                      <div className="flex items-center justify-between text-[11px] text-t3">
+                        <span>
+                          {formatBytes(live.bytesDone ?? task.bytes_done)} / {formatBytes(live.bytesTotal ?? task.bytes_total)}
+                        </span>
+                        {live.speed > 0 && <span>{formatBytes(live.speed)}/s</span>}
+                        <span>{percent}%</span>
+                      </div>
+
+                      {task.error_message && (
+                        <p className="text-[11px] text-err truncate" title={task.error_message}>
+                          Error: {task.error_message}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           )}
         </div>
       </AnimatedDialog>
