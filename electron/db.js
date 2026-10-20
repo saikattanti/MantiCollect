@@ -18,6 +18,14 @@ export const JOB_STATUSES = [
   'cancelled'
 ];
 
+export const CONVERSION_STATUSES = [
+  'waiting',
+  'converting',
+  'completed',
+  'failed',
+  'cancelled'
+];
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS jobs (
   id TEXT PRIMARY KEY,
@@ -51,6 +59,56 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at);
+
+CREATE TABLE IF NOT EXISTS collections (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  description TEXT,
+  color TEXT DEFAULT '#3b82f6',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_collections_name ON collections(name);
+
+CREATE TABLE IF NOT EXISTS collection_items (
+  collection_id TEXT NOT NULL,
+  item_path TEXT NOT NULL,
+  added_at INTEGER NOT NULL,
+  PRIMARY KEY (collection_id, item_path)
+);
+CREATE INDEX IF NOT EXISTS idx_col_items_id ON collection_items(collection_id);
+CREATE INDEX IF NOT EXISTS idx_collection_items_col ON collection_items(collection_id);
+CREATE INDEX IF NOT EXISTS idx_collection_items_path ON collection_items(item_path);
+
+CREATE TABLE IF NOT EXISTS media_metadata (
+  file_path TEXT PRIMARY KEY,
+  file_size INTEGER NOT NULL,
+  file_mtime INTEGER NOT NULL,
+  duration REAL,
+  width INTEGER,
+  height INTEGER,
+  video_codec TEXT,
+  audio_codec TEXT,
+  format_name TEXT,
+  bitrate INTEGER,
+  channels INTEGER,
+  sample_rate INTEGER,
+  probed_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_media_meta_mtime ON media_metadata(file_mtime);
+
+CREATE TABLE IF NOT EXISTS conversions (
+  id TEXT PRIMARY KEY,
+  source_path TEXT NOT NULL,
+  dest_path TEXT NOT NULL,
+  preset_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  progress REAL DEFAULT 0,
+  error TEXT,
+  created_at INTEGER NOT NULL,
+  finished_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_conversions_status ON conversions(status);
 `;
 
 /** Pure migration; usable from tests with an in-memory DB. */
