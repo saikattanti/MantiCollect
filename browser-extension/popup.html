@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MantiCollect</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <!-- Header -->
+    <header class="popup-header">
+      <div class="brand">
+        <div class="brand-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+        </div>
+        <div>
+          <div class="brand-title">MantiCollect</div>
+          <div class="brand-subtitle">A Mantitup Product</div>
+        </div>
+      </div>
+      <div id="connection-badge" class="badge badge-checking">
+        <span class="badge-dot"></span>
+        <span id="connection-text">Checking…</span>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="popup-body">
+      <!-- Active Tab Section -->
+      <section class="section">
+        <label class="section-label">Current Page</label>
+        <div id="url-box" class="url-display">
+          <span id="tab-url">Detecting active tab…</span>
+        </div>
+        <div id="provider-badge-container" class="provider-row">
+          <span id="provider-badge" class="provider-badge hidden">Unknown</span>
+          <span id="support-status" class="support-status text-muted"></span>
+        </div>
+      </section>
+
+      <!-- Message / Alert box -->
+      <div id="status-message" class="status-box hidden"></div>
+
+      <!-- Action Buttons -->
+      <div class="action-buttons">
+        <button id="btn-send" class="btn btn-primary" disabled>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          </svg>
+          Send to MantiCollect
+        </button>
+
+        <button id="btn-focus" class="btn btn-secondary">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+            <line x1="8" y1="21" x2="16" y2="21"/>
+            <line x1="12" y1="17" x2="12" y2="21"/>
+          </svg>
+          Open App
+        </button>
+      </div>
+
+      <!-- Settings Collapsible -->
+      <details class="settings-drawer">
+        <summary>Bridge Settings</summary>
+        <div class="drawer-content">
+          <div class="form-group">
+            <label for="input-port">Bridge Port</label>
+            <input type="number" id="input-port" value="52443" min="1024" max="65535" />
+          </div>
+          <div class="form-group">
+            <label for="input-token">Auth Token</label>
+            <input type="password" id="input-token" placeholder="Paste token from App Settings" />
+          </div>
+          <div class="form-check">
+            <input type="checkbox" id="check-interception" />
+            <label for="check-interception">Enable Download Interception</label>
+          </div>
+          <button id="btn-save-settings" class="btn btn-sm btn-outline">Save Settings</button>
+        </div>
+      </details>
+    </main>
+
+    <!-- Footer -->
+    <footer class="popup-footer">
+      <span id="bridge-type" class="bridge-info">Native Host / Loopback</span>
+      <span class="version-info">v1.0.0</span>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
