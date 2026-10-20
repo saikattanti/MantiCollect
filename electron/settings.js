@@ -14,7 +14,9 @@ export const DEFAULTS = {
   ytdlpPath: '',
   ffmpegPath: '',
   allowLocalNetwork: false,
-  probeTimeoutMs: 30000
+  probeTimeoutMs: 30000,
+  maxConnectionsPerDownload: 4,
+  segmentedDownloads: true
 };
 
 let cache = null;
