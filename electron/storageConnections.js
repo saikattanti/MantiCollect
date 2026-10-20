@@ -3,7 +3,7 @@ import { getDb } from './db.js';
 import { getCredentialService } from './credentials.js';
 import { logger } from './logger.js';
 
-const ALLOWED_PROVIDERS = new Set(['local_nas', 'webdav', 'sftp']);
+const ALLOWED_PROVIDERS = new Set(['local_nas', 'webdav', 'sftp', 's3']);
 
 /**
  * Storage Connection Management Service.
@@ -30,6 +30,8 @@ export function createStorageConnectionManager({
       username: row.username || null,
       allow_insecure_http: Boolean(row.allow_insecure_http),
       host_key_fingerprint: row.host_key_fingerprint || null,
+      region: row.region || null,
+      force_path_style: Boolean(row.force_path_style),
       created_at: row.created_at,
       updated_at: row.updated_at,
       last_success_at: row.last_success_at || null,
@@ -94,6 +96,8 @@ export function createStorageConnectionManager({
     username = null,
     allow_insecure_http = false,
     host_key_fingerprint = null,
+    region = null,
+    force_path_style = false,
     secret = null
   }) {
     if (typeof name !== 'string' || !name.trim()) {
@@ -115,37 +119,76 @@ export function createStorageConnectionManager({
       }
     }
 
+    if (provider_type === 's3') {
+      if (!base_path || typeof base_path !== 'string' || !base_path.trim()) {
+        throw new Error('Bucket name is required for S3-compatible connection');
+      }
+    }
+
     const id = randomUUID();
     const now = Date.now();
     let credRef = null;
 
-    if (secret && typeof secret === 'string' && secret.trim()) {
-      credRef = `conn_${id}`;
-      await creds().saveCredential(credRef, secret.trim());
+    if (secret !== null && secret !== undefined) {
+      const hasContent = typeof secret === 'object' ? Object.keys(secret).length > 0 : Boolean(String(secret).trim());
+      if (hasContent) {
+        credRef = `conn_${id}`;
+        await creds().saveCredential(credRef, secret);
+      }
     }
 
-    db()
-      .prepare(
-        `INSERT INTO storage_connections (
-          id, name, provider_type, host, port, base_path, username,
-          credential_ref, host_key_fingerprint, allow_insecure_http,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        id,
-        name.trim(),
-        provider_type,
-        host ? host.trim() : null,
-        port ? Number(port) : null,
-        base_path ? base_path.trim() : '',
-        username ? username.trim() : null,
-        credRef,
-        host_key_fingerprint ? host_key_fingerprint.trim() : null,
-        allow_insecure_http ? 1 : 0,
-        now,
-        now
-      );
+    const cols = new Set(db().prepare('PRAGMA table_info(storage_connections)').all().map((c) => c.name));
+    const hasS3Cols = cols.has('region') && cols.has('force_path_style');
+
+    if (hasS3Cols) {
+      db()
+        .prepare(
+          `INSERT INTO storage_connections (
+            id, name, provider_type, host, port, base_path, username,
+            credential_ref, host_key_fingerprint, allow_insecure_http,
+            region, force_path_style, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          id,
+          name.trim(),
+          provider_type,
+          host ? host.trim() : null,
+          port ? Number(port) : null,
+          base_path ? base_path.trim() : '',
+          username ? username.trim() : null,
+          credRef,
+          host_key_fingerprint ? host_key_fingerprint.trim() : null,
+          allow_insecure_http ? 1 : 0,
+          region ? region.trim() : null,
+          force_path_style ? 1 : 0,
+          now,
+          now
+        );
+    } else {
+      db()
+        .prepare(
+          `INSERT INTO storage_connections (
+            id, name, provider_type, host, port, base_path, username,
+            credential_ref, host_key_fingerprint, allow_insecure_http,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          id,
+          name.trim(),
+          provider_type,
+          host ? host.trim() : null,
+          port ? Number(port) : null,
+          base_path ? base_path.trim() : '',
+          username ? username.trim() : null,
+          credRef,
+          host_key_fingerprint ? host_key_fingerprint.trim() : null,
+          allow_insecure_http ? 1 : 0,
+          now,
+          now
+        );
+    }
 
     logger.info('storage-connections', `Created ${provider_type} connection "${name}" (${id})`);
     return getConnection(id);
@@ -161,6 +204,8 @@ export function createStorageConnectionManager({
       username,
       allow_insecure_http,
       host_key_fingerprint,
+      region,
+      force_path_style,
       secret,
       removeSecret = false
     }
@@ -177,12 +222,13 @@ export function createStorageConnectionManager({
         await creds().deleteCredential(credRef);
         credRef = null;
       }
-    } else if (secret && typeof secret === 'string' && secret.trim()) {
-      // User provided a replacement secret
-      if (!credRef) credRef = `conn_${id}`;
-      await creds().saveCredential(credRef, secret.trim());
+    } else if (secret !== undefined && secret !== null) {
+      const hasContent = typeof secret === 'object' ? Object.keys(secret).length > 0 : Boolean(String(secret).trim());
+      if (hasContent) {
+        if (!credRef) credRef = `conn_${id}`;
+        await creds().saveCredential(credRef, secret);
+      }
     }
-    // If secret was empty string or undefined and removeSecret was false, existing credRef is preserved!
 
     const nextName = typeof name === 'string' && name.trim() ? name.trim() : existing.name;
     const nextHost = host !== undefined ? (host ? host.trim() : null) : existing.host;
@@ -191,27 +237,57 @@ export function createStorageConnectionManager({
     const nextUsername = username !== undefined ? (username ? username.trim() : null) : existing.username;
     const nextAllowInsecure = allow_insecure_http !== undefined ? (allow_insecure_http ? 1 : 0) : existing.allow_insecure_http;
     const nextFingerprint = host_key_fingerprint !== undefined ? (host_key_fingerprint ? host_key_fingerprint.trim() : null) : existing.host_key_fingerprint;
+    const nextRegion = region !== undefined ? (region ? region.trim() : null) : existing.region;
+    const nextPathStyle = force_path_style !== undefined ? (force_path_style ? 1 : 0) : existing.force_path_style;
 
-    db()
-      .prepare(
-        `UPDATE storage_connections SET
-          name = ?, host = ?, port = ?, base_path = ?, username = ?,
-          credential_ref = ?, host_key_fingerprint = ?, allow_insecure_http = ?,
-          updated_at = ?
-         WHERE id = ?`
-      )
-      .run(
-        nextName,
-        nextHost,
-        nextPort,
-        nextBasePath,
-        nextUsername,
-        credRef,
-        nextFingerprint,
-        nextAllowInsecure,
-        now,
-        id
-      );
+    const cols = new Set(db().prepare('PRAGMA table_info(storage_connections)').all().map((c) => c.name));
+    const hasS3Cols = cols.has('region') && cols.has('force_path_style');
+
+    if (hasS3Cols) {
+      db()
+        .prepare(
+          `UPDATE storage_connections SET
+            name = ?, host = ?, port = ?, base_path = ?, username = ?,
+            credential_ref = ?, host_key_fingerprint = ?, allow_insecure_http = ?,
+            region = ?, force_path_style = ?, updated_at = ?
+           WHERE id = ?`
+        )
+        .run(
+          nextName,
+          nextHost,
+          nextPort,
+          nextBasePath,
+          nextUsername,
+          credRef,
+          nextFingerprint,
+          nextAllowInsecure,
+          nextRegion,
+          nextPathStyle,
+          now,
+          id
+        );
+    } else {
+      db()
+        .prepare(
+          `UPDATE storage_connections SET
+            name = ?, host = ?, port = ?, base_path = ?, username = ?,
+            credential_ref = ?, host_key_fingerprint = ?, allow_insecure_http = ?,
+            updated_at = ?
+           WHERE id = ?`
+        )
+        .run(
+          nextName,
+          nextHost,
+          nextPort,
+          nextBasePath,
+          nextUsername,
+          credRef,
+          nextFingerprint,
+          nextAllowInsecure,
+          now,
+          id
+        );
+    }
 
     logger.info('storage-connections', `Updated connection "${nextName}" (${id})`);
     return getConnection(id);
