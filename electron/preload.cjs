@@ -35,7 +35,29 @@ const INVOKE_CHANNELS = new Set([
   'browser:open-extension-dir',
   'browser:open-host-dir',
   'clipboard:get-detected',
-  'clipboard:clear'
+  'clipboard:clear',
+  'library:query',
+  'library:probe-file',
+  'library:probe-batch',
+  'collections:list',
+  'collections:get',
+  'collections:create',
+  'collections:rename',
+  'collections:delete',
+  'collections:add-items',
+  'collections:remove-items',
+  'export:select-dir',
+  'export:select-file',
+  'export:files',
+  'export:json',
+  'export:csv',
+  'converter:presets',
+  'converter:list',
+  'converter:start',
+  'converter:cancel',
+  'converter:clear',
+  'remote:nas-test',
+  'remote:nas-transfer'
 ]);
 
 const EVENT_CHANNELS = new Set([
@@ -43,7 +65,10 @@ const EVENT_CHANNELS = new Set([
   'zip:progress',
   'ytdlp:install',
   'clipboard:detected',
-  'browser:download-queued'
+  'browser:download-queued',
+  'export:progress',
+  'conversion:progress',
+  'conversion:updated'
 ]);
 
 contextBridge.exposeInMainWorld('mv', {

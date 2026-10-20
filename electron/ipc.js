@@ -6,14 +6,37 @@ import { assertPublicUrl, normalizeUrlInput, fetchWithSafeRedirects } from './se
 import { resolveProvider, capabilityMatrix } from './providers/registry.js';
 import { getBinaryStatus, installYtDlp, ffmpegBinaryPath } from './bins.js';
 import { scanLibrary, readThumbnail, zipFiles, deleteFiles } from './library.js';
+import { queryLibrary } from './libraryQuery.js';
+import { createMetadataService } from './metadata.js';
+import {
+  listCollections,
+  getCollection,
+  createCollection,
+  renameCollection,
+  deleteCollection,
+  addItemsToCollection,
+  removeItemsFromCollection
+} from './collections.js';
+import { exportFilesToDirectory, formatMetadataAsJson, formatMetadataAsCsv } from './export.js';
+import { createConversionService, CONVERSION_PRESETS } from './converter.js';
+import { LocalNasStorageProvider } from './remoteStorage.js';
+import { getDb } from './db.js';
 import { logger } from './logger.js';
 
 /**
  * Restricted IPC surface. Every channel is whitelisted and every payload
  * is validated before use. The renderer never gets Node access.
  */
-export function registerIpc({ getQueue, getWindow, getClipboardDetector }) {
+export function registerIpc({
+  getQueue,
+  getWindow,
+  getClipboardDetector,
+  getMetadataService,
+  getConversionService
+}) {
   const settings = () => loadSettings();
+  const metadataService = getMetadataService ? getMetadataService() : createMetadataService({ getDbInstance: getDb, getSettings: loadSettings });
+  const conversionService = getConversionService ? getConversionService() : createConversionService({ getDbInstance: getDb, getSettings: loadSettings, getWindow });
 
   function handle(channel, fn) {
     ipcMain.handle(channel, async (_event, payload) => {
@@ -406,6 +429,172 @@ export function registerIpc({ getQueue, getWindow, getClipboardDetector }) {
     });
     return result;
   });
+
+  /* ---------------- Phase 7: Media Library Organization & Query ---------------- */
+
+  handle('library:query', async (p) => {
+    return queryLibrary({
+      search: typeof p.search === 'string' ? p.search : '',
+      category: typeof p.category === 'string' ? p.category : 'all',
+      collectionId: p.collectionId ? String(p.collectionId) : null,
+      platform: typeof p.platform === 'string' ? p.platform : 'all',
+      sort: typeof p.sort === 'string' ? p.sort : 'date',
+      order: p.order === 'asc' ? 'asc' : 'desc',
+      limit: Number.isInteger(p.limit) && p.limit > 0 ? Math.min(p.limit, 200) : 50,
+      offset: Number.isInteger(p.offset) && p.offset >= 0 ? p.offset : 0
+    });
+  });
+
+  handle('library:probe-file', async (p) => {
+    const filePath = requireString(p.filePath, 'filePath', 1000);
+    return metadataService.probeFile(filePath);
+  });
+
+  handle('library:probe-batch', async (p) => {
+    const filePaths = requireArray(p.filePaths, 'filePaths', 500).map((x) => requireString(x, 'filePath', 1000));
+    return metadataService.probeBatch(filePaths);
+  });
+
+  /* ---------------- Phase 7: Collections Management ---------------- */
+
+  handle('collections:list', async () => {
+    return listCollections();
+  });
+
+  handle('collections:get', async (p) => {
+    const id = requireString(p.id, 'id', 100);
+    return getCollection(id);
+  });
+
+  handle('collections:create', async (p) => {
+    const name = requireString(p.name, 'name', 200);
+    const description = typeof p.description === 'string' ? p.description : '';
+    const color = typeof p.color === 'string' ? p.color : '#00e5ff';
+    return createCollection(name, description, color);
+  });
+
+  handle('collections:rename', async (p) => {
+    const id = requireString(p.id, 'id', 100);
+    const name = requireString(p.name, 'name', 200);
+    return renameCollection(id, name);
+  });
+
+  handle('collections:delete', async (p) => {
+    const id = requireString(p.id, 'id', 100);
+    return deleteCollection(id);
+  });
+
+  handle('collections:add-items', async (p) => {
+    const id = requireString(p.collectionId, 'collectionId', 100);
+    const itemPaths = requireArray(p.itemPaths, 'itemPaths', 500).map((x) => requireString(x, 'itemPath', 1000));
+    return addItemsToCollection(id, itemPaths);
+  });
+
+  handle('collections:remove-items', async (p) => {
+    const id = requireString(p.collectionId, 'collectionId', 100);
+    const itemPaths = requireArray(p.itemPaths, 'itemPaths', 500).map((x) => requireString(x, 'itemPath', 1000));
+    return removeItemsFromCollection(id, itemPaths);
+  });
+
+  /* ---------------- Phase 7: Batch Selection and Export ---------------- */
+
+  handle('export:select-dir', async () => {
+    const win = getWindow?.();
+    const r = await dialog.showOpenDialog(win, {
+      title: 'Select Export Destination Folder',
+      properties: ['openDirectory', 'createDirectory']
+    });
+    if (r.canceled || !r.filePaths.length) return { path: null };
+    return { path: r.filePaths[0] };
+  });
+
+  handle('export:select-file', async (p) => {
+    const win = getWindow?.();
+    const defaultName = typeof p.defaultName === 'string' ? p.defaultName : 'export';
+    const filters = Array.isArray(p.filters) ? p.filters : [];
+    const r = await dialog.showSaveDialog(win, {
+      title: 'Select Export File',
+      defaultPath: defaultName,
+      filters
+    });
+    if (r.canceled || !r.filePath) return { path: null };
+    return { path: r.filePath };
+  });
+
+  handle('export:files', async (p) => {
+    const filePaths = requireArray(p.filePaths, 'filePaths', 500).map((x) => requireString(x, 'filePath', 1000));
+    const targetDir = requireString(p.targetDir, 'targetDir', 1000);
+    return exportFilesToDirectory({
+      filePaths,
+      targetDir,
+      onProgress: (prog) => sendToWindow('export:progress', prog)
+    });
+  });
+
+  handle('export:json', async (p) => {
+    const items = requireArray(p.items, 'items', 2000);
+    const targetPath = requireString(p.targetPath, 'targetPath', 1000);
+    const jsonStr = formatMetadataAsJson(items);
+    await fs.promises.writeFile(path.resolve(targetPath), jsonStr, 'utf8');
+    return { ok: true, targetPath, count: items.length };
+  });
+
+  handle('export:csv', async (p) => {
+    const items = requireArray(p.items, 'items', 2000);
+    const targetPath = requireString(p.targetPath, 'targetPath', 1000);
+    const csvStr = formatMetadataAsCsv(items);
+    await fs.promises.writeFile(path.resolve(targetPath), csvStr, 'utf8');
+    return { ok: true, targetPath, count: items.length };
+  });
+
+  /* ---------------- Phase 7: Safe FFmpeg Conversion Presets ---------------- */
+
+  handle('converter:presets', async () => {
+    return Object.values(CONVERSION_PRESETS);
+  });
+
+  handle('converter:list', async () => {
+    return conversionService.listConversions();
+  });
+
+  handle('converter:start', async (p) => {
+    const sourcePath = requireString(p.sourcePath, 'sourcePath', 1000);
+    const presetId = requireString(p.presetId, 'presetId', 100);
+    const destDir = typeof p.destDir === 'string' && p.destDir.trim() ? p.destDir.trim() : null;
+    const durationSeconds = typeof p.durationSeconds === 'number' ? p.durationSeconds : null;
+    return conversionService.startConversion({ sourcePath, presetId, destDir, durationSeconds });
+  });
+
+  handle('converter:cancel', async (p) => {
+    const taskId = requireString(p.taskId, 'taskId', 100);
+    return { cancelled: conversionService.cancelConversion(taskId) };
+  });
+
+  handle('converter:clear', async () => {
+    return { cleared: conversionService.clearCompletedConversions() };
+  });
+
+  /* ---------------- Phase 7: Remote Storage Architecture ---------------- */
+
+  handle('remote:nas-test', async (p) => {
+    const basePath = requireString(p.basePath, 'basePath', 1000);
+    const provider = new LocalNasStorageProvider({ basePath });
+    return provider.testConnection();
+  });
+
+  handle('remote:nas-transfer', async (p) => {
+    const sourcePath = requireString(p.sourcePath, 'sourcePath', 1000);
+    const basePath = requireString(p.basePath, 'basePath', 1000);
+    const targetSubdir = typeof p.targetSubdir === 'string' ? p.targetSubdir : '';
+    const provider = new LocalNasStorageProvider({ basePath });
+    return provider.transferFile({ sourcePath, targetSubdir });
+  });
+
+  // Emitted event references for conversion telemetry
+  function emitConversionEvents(data) {
+    sendToWindow('conversion:progress', data);
+    sendToWindow('conversion:updated', data);
+  }
 
   /* ---------------- queue recovery on startup ---------------- */
   getQueue().recover();
