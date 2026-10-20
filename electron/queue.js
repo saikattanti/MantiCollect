@@ -103,6 +103,7 @@ export function createQueue({
   const lastDbWrite = new Map();
   const telemetry = createTelemetryTracker();
   let emitTimer = null;
+  let isShutdown = false;
 
   function rows() {
     return db().prepare('SELECT * FROM jobs ORDER BY created_at DESC LIMIT 500').all();
@@ -452,11 +453,18 @@ export function createQueue({
   }
 
   function pump() {
+    if (isShutdown) return;
     const s = getSettings();
     const concurrency = Math.min(8, Math.max(1, Number(s.concurrency) || 1));
     let guard = 0;
     while (running.size < concurrency && guard++ < 16) {
-      const next = db().prepare(`SELECT * FROM jobs WHERE status = 'waiting' ORDER BY created_at ASC LIMIT 1`).get();
+      if (isShutdown) break;
+      let next;
+      try {
+        next = db().prepare(`SELECT * FROM jobs WHERE status = 'waiting' ORDER BY created_at ASC LIMIT 1`).get();
+      } catch {
+        break;
+      }
       if (!next) break;
       if (running.has(next.id)) break;
       runJob(next);
@@ -508,6 +516,7 @@ export function createQueue({
   }
 
   function shutdown() {
+    isShutdown = true;
     for (const [, h] of running) h.cancel();
     if (emitTimer) clearTimeout(emitTimer);
   }
