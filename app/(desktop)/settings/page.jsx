@@ -1,0 +1,252 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import { toast } from 'sonner';
+import { Palette, FolderDown, Cpu, ShieldAlert, ShieldCheck, Download, FolderOpen, Monitor, Moon, Sun } from 'lucide-react';
+import { api, onEvent } from '@/lib/ipc.js';
+import { Button, Card, CardHeader, Input, Label, Select, Toggle, Spinner } from '@/components/ui.jsx';
+import { useTheme } from '@/lib/theme.jsx';
+
+export default function SettingsPage() {
+  const [s, setS] = useState(null);
+  const [bins, setBins] = useState(null);
+  const [installing, setInstalling] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const { theme, setTheme } = useTheme();
+
+  useEffect(() => {
+    api.settings.get().then(setS).catch(() => {});
+    api.bins.status().then(setBins).catch(() => {});
+    return onEvent('ytdlp:install', (p) => {
+      if (p.phase === 'downloading' && p.total) setInstalling({ phase: p.phase, pct: (p.received / p.total) * 100, message: p.message });
+      else setInstalling(p);
+    });
+  }, []);
+
+  if (!s) {
+    return (
+      <div className="flex items-center gap-3 py-20 text-sm text-t3">
+        <Spinner /> Loading settings…
+      </div>
+    );
+  }
+
+  function set(key, value) {
+    setS((prev) => ({ ...prev, [key]: value }));
+  }
+
+  async function pickDir() {
+    const r = await api.selectDirectory();
+    if (r.path) set('downloadDir', r.path);
+  }
+
+  async function save() {
+    setSaving(true);
+    try {
+      const next = await api.settings.set(s);
+      setS(next);
+      toast.success('Settings saved');
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function installYtDlp() {
+    setInstalling({ phase: 'starting' });
+    try {
+      const r = await api.bins.installYtDlp();
+      toast.success(`yt-dlp installed (${r.version || 'ok'})`);
+      setBins(await api.bins.status());
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setInstalling(null);
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <header className="flex items-end justify-between">
+        <div>
+          <p className="overline">System</p>
+          <h1 className="mt-1 text-[22px] font-semibold tracking-tight text-t1">Settings</h1>
+          <p className="mt-1 text-sm text-t2">Stored locally in the app data folder. No cloud, no telemetry.</p>
+        </div>
+        <Button onClick={save} disabled={saving}>
+          {saving ? 'Saving…' : 'Save settings'}
+        </Button>
+      </header>
+
+      <Card>
+        <CardHeader title="Appearance" subtitle="Theme applies instantly; Windows 11 Mica is used for the window backdrop automatically" icon={Palette} />
+        <div className="p-5">
+          <div className="flex gap-2" role="radiogroup" aria-label="Theme">
+            {[
+              { id: 'dark', label: 'Dark', icon: Moon },
+              { id: 'light', label: 'Light', icon: Sun },
+              { id: 'system', label: 'System', icon: Monitor }
+            ].map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                role="radio"
+                aria-checked={theme === id}
+                onClick={() => setTheme(id)}
+                className={`flex items-center gap-2 rounded-lg border px-4 py-2.5 text-[13px] font-medium transition-all outline-none focus-visible:ring-2 focus-visible:ring-accent/50 ${
+                  theme === id
+                    ? 'border-accent/50 bg-accent-soft text-t1 shadow-xs'
+                    : 'border-line bg-surface-2/40 text-t2 hover:border-line-strong hover:text-t1'
+                }`}
+              >
+                <Icon style={{ width: 15, height: 15 }} className={theme === id ? 'text-accent-text' : 'text-t3'} />
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className="mt-3 text-xs leading-relaxed text-t3">
+            Dark is the default. “System” follows your Windows appearance. The main window uses the native Mica material on Windows 11 with a solid
+            fallback everywhere else, so readability never depends on transparency effects.
+          </p>
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader title="Downloads" icon={FolderDown} />
+        <div className="space-y-4 p-5">
+          <div>
+            <Label>Download folder</Label>
+            <div className="flex gap-1.5">
+              <Input value={s.downloadDir} onChange={(e) => set('downloadDir', e.target.value)} />
+              <Button variant="secondary" onClick={pickDir}>
+                <FolderOpen style={{ width: 15, height: 15 }} /> Browse
+              </Button>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label>Max concurrent downloads (1–8)</Label>
+              <Select value={s.concurrency} onChange={(e) => set('concurrency', Number(e.target.value))} className="w-full">
+                {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div>
+              <Label>Max file size (MB, 0 = unlimited)</Label>
+              <Input type="number" min="0" value={s.maxFileSizeMB} onChange={(e) => set('maxFileSizeMB', Number(e.target.value))} />
+            </div>
+            <div>
+              <Label>When a file name already exists</Label>
+              <Select value={s.overwrite} onChange={(e) => set('overwrite', e.target.value)} className="w-full">
+                <option value="avoid">Keep both (rename new file)</option>
+                <option value="overwrite">Overwrite existing</option>
+              </Select>
+            </div>
+            <div>
+              <Label>Source probe timeout (ms)</Label>
+              <Input type="number" min="5000" max="120000" step="1000" value={s.probeTimeoutMs} onChange={(e) => set('probeTimeoutMs', Number(e.target.value))} />
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader title="Binaries" subtitle="MediaVault drives FFmpeg and yt-dlp as local child processes" icon={Cpu} />
+        <div className="space-y-3 p-5">
+          <BinStatus label="FFmpeg" info={bins?.ffmpeg} hint="Bundled via ffmpeg-static. Used for merging video+audio and conversions." />
+          <BinStatus label="FFprobe" info={bins?.ffprobe} hint="Bundled via ffprobe-static. Used for media inspection." />
+          <div className="flex items-center justify-between rounded-xl border border-line bg-bg-elev/40 p-3.5">
+            <div className="min-w-0">
+              <p className="text-[13px] font-medium text-t1">
+                yt-dlp {bins?.ytdlp?.version ? `— ${bins.ytdlp.version}` : '— not installed'}
+                {bins?.ytdlp?.available && <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-ok align-middle" />}
+              </p>
+              <p className="mt-0.5 text-xs text-t3">Official standalone executable from the yt-dlp GitHub releases (MIT). Installed into vendor/yt-dlp.</p>
+            </div>
+            <Button onClick={installYtDlp} disabled={!!installing}>
+              <Download style={{ width: 15, height: 15 }} />
+              {installing ? installing.phase : 'Install / update'}
+            </Button>
+          </div>
+          {installing && (installing.pct || installing.message) && (
+            <p className="text-xs tabular-nums text-t3">
+              {installing.message || ''} {installing.pct ? `${Math.round(installing.pct)}%` : ''}
+            </p>
+          )}
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Authorization"
+          subtitle="Explicit, user-provided credentials only. MediaVault never reads your browser automatically."
+        />
+        <div className="space-y-4 p-5">
+          <div>
+            <Label>cookies.txt (Netscape format) — optional</Label>
+            <Input
+              value={s.cookiesFile}
+              onChange={(e) => set('cookiesFile', e.target.value)}
+              placeholder="C:\Users\you\cookies.txt (leave empty to never send cookies)"
+            />
+            <p className="mt-1.5 text-xs leading-relaxed text-t3">
+              Only used for sources that require it (e.g. profile collections on Instagram/X). Export the file yourself from a browser cookies
+              extension while logged into your own account. The path is stored locally; cookie contents are never logged.
+            </p>
+          </div>
+          <div className="flex items-start gap-3 rounded-xl border border-warn/25 bg-warn/5 p-3.5">
+            <ShieldAlert className="mt-0.5 shrink-0 text-warn" style={{ width: 16, height: 16 }} />
+            <p className="text-xs leading-relaxed text-warn/90">
+              Use cookies.txt only for accounts and content you are authorized to access. Bypassing paywalls, DRM, or private-account permissions is
+              not supported and may violate platform terms and law.
+            </p>
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader title="Network safety" />
+        <div className="space-y-4 p-5">
+          <Toggle
+            checked={!!s.allowLocalNetwork}
+            onChange={(v) => set('allowLocalNetwork', v)}
+            label="Allow local-network URLs (developer option)"
+            description="By default MediaVault blocks localhost, LAN IPs, and hosts resolving to private addresses (SSRF protection). Enable only for local test servers."
+          />
+          <div className="flex items-start gap-3 rounded-xl border border-line bg-bg-elev/40 p-3.5">
+            <ShieldCheck className="mt-0.5 shrink-0 text-ok" style={{ width: 16, height: 16 }} />
+            <ul className="list-disc space-y-1 pl-4 text-xs leading-relaxed text-t3">
+              <li>Only http/https schemes are fetched; redirects are re-validated hop by hop.</li>
+              <li>TLS certificate verification is never disabled.</li>
+              <li>User URLs are passed to child processes as argv arrays — never shell-interpolated.</li>
+              <li>Downloads stream to temp files inside the download folder and are verified before move.</li>
+            </ul>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function BinStatus({ label, info, hint }) {
+  return (
+    <div className="flex items-center justify-between rounded-xl border border-line bg-bg-elev/40 p-3.5">
+      <div className="min-w-0">
+        <p className="text-[13px] font-medium text-t1">
+          {label}{' '}
+          {info?.available ? (
+            <span className="text-xs text-ok">— {info.version}</span>
+          ) : (
+            <span className="text-xs text-err">— not found</span>
+          )}
+        </p>
+        <p className="mt-0.5 truncate text-xs text-t3" title={info?.path || ''}>
+          {info?.path || hint}
+        </p>
+      </div>
+    </div>
+  );
+}
