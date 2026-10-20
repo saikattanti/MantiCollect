@@ -3,8 +3,20 @@ import path from 'node:path';
 import http from 'node:http';
 import https from 'node:https';
 import { pipeline } from 'node:stream/promises';
+import { Readable } from 'node:stream';
 import crypto from 'node:crypto';
 import { Client as SftpClient } from 'ssh2';
+import {
+  S3Client,
+  HeadBucketCommand,
+  HeadObjectCommand,
+  PutObjectCommand,
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  CompleteMultipartUploadCommand,
+  AbortMultipartUploadCommand,
+  ListObjectsV2Command
+} from '@aws-sdk/client-s3';
 import { uniqueDestPath } from './export.js';
 import { createBandwidthThrottler } from './bandwidth.js';
 import { assertPublicUrl } from './security.js';
@@ -16,7 +28,18 @@ import { logger } from './logger.js';
 export class BaseStorageProvider {
   constructor(name, type) {
     this.name = name;
-    this.type = type; // 'local_nas' | 'webdav' | 'sftp'
+    this.type = type; // 'local_nas' | 'webdav' | 'sftp' | 's3'
+  }
+
+  getCapabilities() {
+    return {
+      supportsStreaming: true,
+      supportsCancellation: true,
+      supportsMultipart: false,
+      supportsMultipartResume: false,
+      supportsSizeVerification: false,
+      supportsChecksumVerification: false
+    };
   }
 
   /**
@@ -54,6 +77,17 @@ export class LocalNasStorageProvider extends BaseStorageProvider {
     this.basePath = basePath ? path.resolve(basePath) : null;
   }
 
+  getCapabilities() {
+    return {
+      supportsStreaming: true,
+      supportsCancellation: true,
+      supportsMultipart: false,
+      supportsMultipartResume: false,
+      supportsSizeVerification: true,
+      supportsChecksumVerification: false
+    };
+  }
+
   async testConnection() {
     if (!this.basePath) {
       return { ok: false, message: 'Base path is not configured' };
@@ -82,7 +116,8 @@ export class LocalNasStorageProvider extends BaseStorageProvider {
     conflictPolicy = 'avoid',
     onProgress = () => {},
     abortSignal = null,
-    rateLimitBytesPerSec = 0
+    rateLimitBytesPerSec = 0,
+    globalLimiter = null
   }) {
     if (!this.basePath) {
       throw new Error('NAS base path is not configured');
@@ -106,7 +141,7 @@ export class LocalNasStorageProvider extends BaseStorageProvider {
 
     const sourceStream = fs.createReadStream(sourcePath);
     const destStream = fs.createWriteStream(destPath);
-    const throttler = createBandwidthThrottler({ bytesPerSecond: rateLimitBytesPerSec, abortSignal });
+    const throttler = createBandwidthThrottler({ bytesPerSecond: rateLimitBytesPerSec, globalLimiter, abortSignal });
 
     let bytesTransferred = 0;
     let lastTime = Date.now();
@@ -175,6 +210,17 @@ export class WebDavStorageProvider extends BaseStorageProvider {
     this.password = password;
     this.allowInsecureHttp = Boolean(allowInsecureHttp);
     this.allowLocalNetwork = Boolean(allowLocalNetwork);
+  }
+
+  getCapabilities() {
+    return {
+      supportsStreaming: true,
+      supportsCancellation: true,
+      supportsMultipart: false,
+      supportsMultipartResume: false,
+      supportsSizeVerification: true,
+      supportsChecksumVerification: false
+    };
   }
 
   normalizeUrl() {
@@ -314,7 +360,8 @@ export class WebDavStorageProvider extends BaseStorageProvider {
     conflictPolicy = 'avoid',
     onProgress = () => {},
     abortSignal = null,
-    rateLimitBytesPerSec = 0
+    rateLimitBytesPerSec = 0,
+    globalLimiter = null
   }) {
     if (abortSignal?.aborted) {
       throw new Error('Transfer aborted by user');
@@ -337,7 +384,7 @@ export class WebDavStorageProvider extends BaseStorageProvider {
 
     // Read stream with throttling
     const readStream = fs.createReadStream(sourcePath);
-    const throttler = createBandwidthThrottler({ bytesPerSecond: rateLimitBytesPerSec, abortSignal });
+    const throttler = createBandwidthThrottler({ bytesPerSecond: rateLimitBytesPerSec, globalLimiter, abortSignal });
 
     let bytesTransferred = 0;
     let lastTime = Date.now();
@@ -443,6 +490,17 @@ export class SftpStorageProvider extends BaseStorageProvider {
     this.hostKeyFingerprint = hostKeyFingerprint ? hostKeyFingerprint.trim().toLowerCase() : null;
     this.allowLocalNetwork = Boolean(allowLocalNetwork);
     this.clientFactory = clientFactory;
+  }
+
+  getCapabilities() {
+    return {
+      supportsStreaming: true,
+      supportsCancellation: true,
+      supportsMultipart: false,
+      supportsMultipartResume: false,
+      supportsSizeVerification: true,
+      supportsChecksumVerification: false
+    };
   }
 
   createClient() {
@@ -557,7 +615,8 @@ export class SftpStorageProvider extends BaseStorageProvider {
     remoteFileName = null,
     onProgress = () => {},
     abortSignal = null,
-    rateLimitBytesPerSec = 0
+    rateLimitBytesPerSec = 0,
+    globalLimiter = null
   }) {
     if (!fs.existsSync(sourcePath)) {
       throw new Error(`Source file does not exist: ${sourcePath}`);
@@ -597,7 +656,7 @@ export class SftpStorageProvider extends BaseStorageProvider {
 
       const readStream = fs.createReadStream(sourcePath);
       const writeStream = sftp.createWriteStream(remoteDest);
-      const throttler = createBandwidthThrottler({ bytesPerSecond: rateLimitBytesPerSec, abortSignal });
+      const throttler = createBandwidthThrottler({ bytesPerSecond: rateLimitBytesPerSec, globalLimiter, abortSignal });
 
       let bytesTransferred = 0;
       let lastTime = Date.now();
@@ -644,3 +703,413 @@ export class SftpStorageProvider extends BaseStorageProvider {
     });
   }
 }
+
+/**
+ * S3-Compatible Storage Provider using AWS SDK v3.
+ * Supports AWS S3, Cloudflare R2, MinIO, and custom endpoints.
+ * Features single-part streaming (<10MB), chunked multipart uploads (>=10MB),
+ * bandwidth throttling, abort cleanup, and remote size verification.
+ */
+export class S3StorageProvider extends BaseStorageProvider {
+  constructor({
+    name = 'S3 Storage',
+    endpoint = null,
+    region = 'us-east-1',
+    bucket,
+    keyPrefix = '',
+    accessKeyId = null,
+    secretAccessKey = null,
+    sessionToken = null,
+    forcePathStyle = false,
+    allowInsecureHttp = false,
+    allowLocalNetwork = false,
+    clientFactory = null
+  } = {}) {
+    super(name, 's3');
+    this.endpoint = endpoint ? endpoint.trim() : null;
+    this.region = region ? region.trim() : 'us-east-1';
+    this.bucket = bucket ? bucket.trim() : null;
+    this.keyPrefix = keyPrefix ? keyPrefix.trim() : '';
+    this.accessKeyId = accessKeyId;
+    this.secretAccessKey = secretAccessKey;
+    this.sessionToken = sessionToken;
+    this.forcePathStyle = Boolean(forcePathStyle);
+    this.allowInsecureHttp = Boolean(allowInsecureHttp);
+    this.allowLocalNetwork = Boolean(allowLocalNetwork);
+    this.clientFactory = clientFactory;
+  }
+
+  getCapabilities() {
+    return {
+      supportsStreaming: true,
+      supportsCancellation: true,
+      supportsMultipart: true,
+      supportsMultipartResume: true,
+      supportsSizeVerification: true,
+      supportsChecksumVerification: true
+    };
+  }
+
+  async validateEndpoint() {
+    if (!this.endpoint) return;
+    let raw = this.endpoint.trim();
+    if (!/^https?:\/\//i.test(raw)) {
+      raw = `https://${raw}`;
+    }
+    const u = new URL(raw);
+    if (u.username || u.password) {
+      throw new Error('Embedded credentials in S3 endpoint URL are prohibited for security');
+    }
+    if (u.protocol === 'http:' && !this.allowInsecureHttp) {
+      throw new Error('Insecure HTTP is not permitted for S3 endpoints. Enable allowInsecureHttp to opt-in.');
+    }
+    if (!this.allowLocalNetwork) {
+      await assertPublicUrl(u.href, { allowLocal: false });
+    }
+  }
+
+  createClient() {
+    if (this.clientFactory) return this.clientFactory();
+    if (!this.bucket) {
+      throw new Error('Bucket name is required for S3 storage provider');
+    }
+    const config = {
+      region: this.region || 'us-east-1',
+      forcePathStyle: this.forcePathStyle
+    };
+
+    if (this.endpoint) {
+      let raw = this.endpoint.trim();
+      if (!/^https?:\/\//i.test(raw)) raw = `https://${raw}`;
+      config.endpoint = raw;
+    }
+
+    if (this.accessKeyId && this.secretAccessKey) {
+      config.credentials = {
+        accessKeyId: this.accessKeyId,
+        secretAccessKey: this.secretAccessKey,
+        sessionToken: this.sessionToken || undefined
+      };
+    }
+
+    return new S3Client(config);
+  }
+
+  async testConnection() {
+    try {
+      await this.validateEndpoint();
+      const client = this.createClient();
+      try {
+        await client.send(new HeadBucketCommand({ Bucket: this.bucket }));
+        return { ok: true, message: `Successfully connected to S3 bucket "${this.bucket}"` };
+      } catch (headErr) {
+        try {
+          await client.send(new ListObjectsV2Command({ Bucket: this.bucket, MaxKeys: 1 }));
+          return { ok: true, message: `Successfully connected to S3 bucket "${this.bucket}"` };
+        } catch (listErr) {
+          const msg = headErr.message || listErr.message || 'Unknown error';
+          if (/403|Forbidden|AccessDenied/i.test(msg)) {
+            return { ok: false, message: `Access denied to S3 bucket "${this.bucket}". Check credentials.` };
+          }
+          if (/404|NotFound|NoSuchBucket/i.test(msg)) {
+            return { ok: false, message: `S3 bucket "${this.bucket}" does not exist.` };
+          }
+          return { ok: false, message: `S3 connection failed: ${msg}` };
+        }
+      }
+    } catch (err) {
+      return { ok: false, message: `S3 configuration error: ${err.message}` };
+    }
+  }
+
+  buildRemoteKey(filename, targetSubdir = '') {
+    const parts = [];
+    if (this.keyPrefix) parts.push(this.keyPrefix.replace(/^\/+|\/+$/g, ''));
+    if (targetSubdir) parts.push(targetSubdir.replace(/^\/+|\/+$/g, ''));
+    parts.push(filename);
+    return parts.filter(Boolean).join('/').replace(/\\/g, '/');
+  }
+
+  async transferFile({
+    sourcePath,
+    targetSubdir = '',
+    remoteFileName = null,
+    conflictPolicy = 'avoid',
+    onProgress = () => {},
+    abortSignal = null,
+    rateLimitBytesPerSec = 0,
+    globalLimiter = null,
+    onMultipartPart = null
+  }) {
+    if (abortSignal?.aborted) {
+      throw new Error('Transfer aborted by user');
+    }
+    if (!fs.existsSync(sourcePath)) {
+      throw new Error(`Source file does not exist: ${sourcePath}`);
+    }
+
+    const st = await fs.promises.stat(sourcePath);
+    if (!st.isFile()) {
+      throw new Error(`Source is not a regular file: ${sourcePath}`);
+    }
+
+    await this.validateEndpoint();
+    const client = this.createClient();
+
+    let filename = remoteFileName || path.basename(sourcePath);
+    let remoteKey = this.buildRemoteKey(filename, targetSubdir);
+
+    // Check remote object existence for conflictPolicy
+    let existingObj = null;
+    try {
+      existingObj = await client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: remoteKey }));
+    } catch {
+      // 404 is normal when object doesn't exist yet
+    }
+
+    if (existingObj) {
+      if (conflictPolicy === 'skip') {
+        const remoteSize = Number(existingObj.ContentLength);
+        if (remoteSize === st.size) {
+          return {
+            ok: true,
+            skipped: true,
+            destPath: remoteKey,
+            bytesTransferred: 0,
+            message: `Remote object "${remoteKey}" verified identical, skipped.`
+          };
+        }
+      } else if (conflictPolicy === 'avoid') {
+        const ext = path.extname(filename);
+        const base = path.basename(filename, ext);
+        let counter = 1;
+        while (counter < 100) {
+          filename = `${base}_${counter}${ext}`;
+          remoteKey = this.buildRemoteKey(filename, targetSubdir);
+          try {
+            await client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: remoteKey }));
+            counter++;
+          } catch {
+            break;
+          }
+        }
+      }
+    }
+
+    // Determine upload strategy:
+    // Files < 10 MB use single PutObjectCommand
+    // Files >= 10 MB use Multipart Upload (8 MB parts)
+    const MULTIPART_THRESHOLD = 10 * 1024 * 1024;
+    const PART_SIZE = 8 * 1024 * 1024;
+
+    if (st.size < MULTIPART_THRESHOLD) {
+      return this._uploadSinglePart({
+        client,
+        sourcePath,
+        remoteKey,
+        fileSize: st.size,
+        abortSignal,
+        rateLimitBytesPerSec,
+        globalLimiter,
+        onProgress
+      });
+    }
+
+    return this._uploadMultipart({
+      client,
+      sourcePath,
+      remoteKey,
+      fileSize: st.size,
+      partSize: PART_SIZE,
+      abortSignal,
+      rateLimitBytesPerSec,
+      globalLimiter,
+      onProgress,
+      onMultipartPart
+    });
+  }
+
+  async _uploadSinglePart({
+    client,
+    sourcePath,
+    remoteKey,
+    fileSize,
+    abortSignal,
+    rateLimitBytesPerSec,
+    globalLimiter,
+    onProgress
+  }) {
+    const readStream = fs.createReadStream(sourcePath);
+    const throttler = createBandwidthThrottler({ bytesPerSecond: rateLimitBytesPerSec, globalLimiter, abortSignal });
+
+    let bytesTransferred = 0;
+    let lastTime = Date.now();
+    let lastBytes = 0;
+
+    readStream.on('data', (chunk) => {
+      bytesTransferred += chunk.length;
+      const now = Date.now();
+      const elapsed = (now - lastTime) / 1000;
+      let speed = 0;
+      if (elapsed >= 0.25) {
+        speed = Math.round((bytesTransferred - lastBytes) / elapsed);
+        lastTime = now;
+        lastBytes = bytesTransferred;
+      }
+      onProgress({
+        sourcePath,
+        destPath: remoteKey,
+        bytesTransferred,
+        totalBytes: fileSize,
+        speed,
+        percent: fileSize > 0 ? Math.min(100, Math.round((bytesTransferred / fileSize) * 100)) : 0
+      });
+    });
+
+    const bodyStream = readStream.pipe(throttler);
+
+    try {
+      await client.send(
+        new PutObjectCommand({
+          Bucket: this.bucket,
+          Key: remoteKey,
+          Body: bodyStream,
+          ContentLength: fileSize
+        }),
+        { abortSignal: abortSignal || undefined }
+      );
+
+      // Verify remote size
+      const verify = await client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: remoteKey }));
+      if (Number(verify.ContentLength) !== fileSize) {
+        throw new Error(`S3 size mismatch: expected ${fileSize} bytes, remote object is ${verify.ContentLength}`);
+      }
+
+      logger.info('s3', `Uploaded ${path.basename(sourcePath)} to s3://${this.bucket}/${remoteKey}`);
+      return { ok: true, destPath: remoteKey, bytesTransferred: fileSize };
+    } catch (err) {
+      try { readStream.destroy(); } catch {}
+      try { throttler.destroy(); } catch {}
+      throw new Error(`S3 upload failed: ${err.message}`);
+    }
+  }
+
+  async _uploadMultipart({
+    client,
+    sourcePath,
+    remoteKey,
+    fileSize,
+    partSize,
+    abortSignal,
+    rateLimitBytesPerSec,
+    globalLimiter,
+    onProgress,
+    onMultipartPart
+  }) {
+    let uploadId = null;
+
+    try {
+      const createRes = await client.send(
+        new CreateMultipartUploadCommand({
+          Bucket: this.bucket,
+          Key: remoteKey
+        }),
+        { abortSignal: abortSignal || undefined }
+      );
+      uploadId = createRes.UploadId;
+
+      const totalParts = Math.ceil(fileSize / partSize);
+      const completedParts = [];
+      let totalBytesUploaded = 0;
+      let lastTime = Date.now();
+      let lastBytes = 0;
+
+      for (let partNumber = 1; partNumber <= totalParts; partNumber++) {
+        if (abortSignal?.aborted) {
+          throw new Error('Transfer aborted by user');
+        }
+
+        const start = (partNumber - 1) * partSize;
+        const end = Math.min(fileSize - 1, start + partSize - 1);
+        const thisPartBytes = end - start + 1;
+
+        const throttler = createBandwidthThrottler({ bytesPerSecond: rateLimitBytesPerSec, globalLimiter, abortSignal });
+        const partStream = fs.createReadStream(sourcePath, { start, end });
+
+        const chunks = [];
+        for await (const chunk of partStream.pipe(throttler)) {
+          chunks.push(chunk);
+          totalBytesUploaded += chunk.length;
+          const now = Date.now();
+          const elapsed = (now - lastTime) / 1000;
+          let speed = 0;
+          if (elapsed >= 0.25) {
+            speed = Math.round((totalBytesUploaded - lastBytes) / elapsed);
+            lastTime = now;
+            lastBytes = totalBytesUploaded;
+          }
+          onProgress({
+            sourcePath,
+            destPath: remoteKey,
+            bytesTransferred: totalBytesUploaded,
+            totalBytes: fileSize,
+            speed,
+            percent: Math.min(100, Math.round((totalBytesUploaded / fileSize) * 100))
+          });
+        }
+
+        const partBuffer = Buffer.concat(chunks);
+        const uploadPartRes = await client.send(
+          new UploadPartCommand({
+            Bucket: this.bucket,
+            Key: remoteKey,
+            UploadId: uploadId,
+            PartNumber: partNumber,
+            Body: partBuffer,
+            ContentLength: thisPartBytes
+          }),
+          { abortSignal: abortSignal || undefined }
+        );
+
+        const partMeta = { PartNumber: partNumber, ETag: uploadPartRes.ETag };
+        completedParts.push(partMeta);
+        if (onMultipartPart) {
+          try { onMultipartPart({ uploadId, remoteKey, ...partMeta }); } catch {}
+        }
+      }
+
+      await client.send(
+        new CompleteMultipartUploadCommand({
+          Bucket: this.bucket,
+          Key: remoteKey,
+          UploadId: uploadId,
+          MultipartUpload: { Parts: completedParts }
+        }),
+        { abortSignal: abortSignal || undefined }
+      );
+
+      const verify = await client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: remoteKey }));
+      if (Number(verify.ContentLength) !== fileSize) {
+        throw new Error(`S3 multipart size mismatch: expected ${fileSize} bytes, remote object is ${verify.ContentLength}`);
+      }
+
+      logger.info('s3', `Completed multipart upload for ${path.basename(sourcePath)} to s3://${this.bucket}/${remoteKey}`);
+      return { ok: true, destPath: remoteKey, bytesTransferred: fileSize };
+    } catch (err) {
+      if (uploadId) {
+        try {
+          await client.send(new AbortMultipartUploadCommand({
+            Bucket: this.bucket,
+            Key: remoteKey,
+            UploadId: uploadId
+          }));
+          logger.info('s3', `Aborted multipart upload ${uploadId} for s3://${this.bucket}/${remoteKey}`);
+        } catch (abortErr) {
+          logger.warn('s3', `Failed to abort multipart upload ${uploadId}: ${abortErr.message}`);
+        }
+      }
+      throw err;
+    }
+  }
+}
+
