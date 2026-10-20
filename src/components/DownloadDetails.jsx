@@ -12,7 +12,9 @@ import {
   Gauge,
   HardDrive,
   FileText,
-  AlertTriangle
+  AlertTriangle,
+  Pause,
+  Play
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatBytes, formatSpeed, formatEta, formatPercent, formatDate } from '@/lib/format.js';
@@ -31,6 +33,8 @@ import SpeedGraph from '@/components/SpeedGraph.jsx';
  */
 export default function DownloadDetails({
   job,
+  onPause,
+  onResume,
   onCancel,
   onRetry,
   onRemove,
@@ -39,8 +43,9 @@ export default function DownloadDetails({
 }) {
   if (!job) return null;
 
-  const isActive = ['waiting', 'fetching_metadata', 'downloading', 'processing'].includes(job.status);
-  const isTransferring = job.status === 'downloading' || job.status === 'processing';
+  const isActive = ['waiting', 'fetching_metadata', 'downloading', 'processing', 'pausing', 'resuming'].includes(job.status);
+  const isTransferring = ['downloading', 'processing', 'resuming'].includes(job.status);
+  const isPaused = job.status === 'paused';
   const hasTotal = job.totalBytes != null && job.totalBytes > 0;
   const progressPct = hasTotal ? (job.progressPercent != null ? job.progressPercent : (job.progress || 0) * 100) : null;
 
@@ -103,7 +108,22 @@ export default function DownloadDetails({
               <FolderOpen style={{ width: 14, height: 14 }} /> Open folder
             </Button>
           )}
-          {isActive && (
+          {['downloading', 'resuming'].includes(job.status) && (
+            <Button variant="secondary" size="sm" onClick={() => onPause?.(job.id)}>
+              <Pause style={{ width: 14, height: 14 }} /> Pause
+            </Button>
+          )}
+          {job.status === 'pausing' && (
+            <Button variant="secondary" size="sm" disabled>
+              <Pause style={{ width: 14, height: 14 }} className="animate-spin" /> Pausing…
+            </Button>
+          )}
+          {job.status === 'paused' && (
+            <Button variant="primary" size="sm" onClick={() => onResume?.(job.id)}>
+              <Play style={{ width: 14, height: 14 }} /> Resume
+            </Button>
+          )}
+          {['waiting', 'fetching_metadata', 'downloading', 'processing', 'pausing', 'paused', 'resuming'].includes(job.status) && (
             <Button variant="danger" size="sm" onClick={() => onCancel?.(job.id)}>
               <XCircle style={{ width: 14, height: 14 }} /> Cancel
             </Button>
@@ -119,12 +139,12 @@ export default function DownloadDetails({
         </div>
       </div>
 
-      {/* Progress Bar (when active) */}
-      {isTransferring && (
+      {/* Progress Bar (when active or paused) */}
+      {(isTransferring || isPaused) && (
         <div className="mt-4">
           <div className="mb-1.5 flex items-center justify-between text-xs">
             <span className="font-medium text-t1 tabular-nums">
-              {hasTotal ? formatPercent(progressPct) : 'Streaming chunks…'}
+              {hasTotal ? formatPercent(progressPct) : (isPaused ? 'Paused (streamed)' : 'Streaming chunks…')}
             </span>
             <span className="text-t3 tabular-nums">
               {formatBytes(job.downloadedBytes)}
