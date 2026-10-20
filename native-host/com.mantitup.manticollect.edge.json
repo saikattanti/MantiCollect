@@ -1,0 +1,9 @@
+{
+  "name": "com.mantitup.manticollect",
+  "description": "MantiCollect Native Messaging Host",
+  "path": "manticollect_host.bat",
+  "type": "stdio",
+  "allowed_origins": [
+    "extension://*/*"
+  ]
+}
