@@ -166,6 +166,11 @@ export default function QueuePage() {
                               {j.provider}
                             </span>
                           )}
+                          {j.isSegmented && (
+                            <span className="shrink-0 rounded bg-accent-soft px-1.5 py-0.2 text-[10px] font-semibold tracking-wide text-accent-text">
+                              {j.activeConnections ? `${j.activeConnections} streams` : `${j.segmentsCount || 4} segs`}
+                            </span>
+                          )}
                         </div>
                         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-t3">
                           <span className="truncate max-w-[240px]">{j.url}</span>

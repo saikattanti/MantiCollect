@@ -150,6 +150,45 @@ export default function SettingsPage() {
               <Input type="number" min="5000" max="120000" step="1000" value={s.probeTimeoutMs} onChange={(e) => set('probeTimeoutMs', Number(e.target.value))} />
             </div>
           </div>
+
+          <div className="rounded-xl border border-line bg-surface-2/40 p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[13px] font-semibold text-t1">IDM Multi-Connection Engine</p>
+                <p className="mt-0.5 text-xs text-t3">
+                  Accelerates eligible direct HTTP downloads by requesting concurrent byte-range streams.
+                </p>
+              </div>
+              <label className="relative inline-flex cursor-pointer items-center">
+                <input
+                  type="checkbox"
+                  checked={s.segmentedDownloads !== false}
+                  onChange={(e) => set('segmentedDownloads', e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-surface-3 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent"></div>
+              </label>
+            </div>
+            {s.segmentedDownloads !== false && (
+              <div className="mt-3.5 pt-3 border-t border-line/50 flex items-center justify-between">
+                <div>
+                  <Label>Connections per download</Label>
+                  <p className="text-[11px] text-t3">Number of simultaneous Range workers (default 4, max 8).</p>
+                </div>
+                <Select
+                  value={s.maxConnectionsPerDownload || 4}
+                  onChange={(e) => set('maxConnectionsPerDownload', Number(e.target.value))}
+                  className="w-28"
+                >
+                  {[2, 3, 4, 5, 6, 7, 8].map((n) => (
+                    <option key={n} value={n}>
+                      {n} streams
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            )}
+          </div>
         </div>
       </Card>
 

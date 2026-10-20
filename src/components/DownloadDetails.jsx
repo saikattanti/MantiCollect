@@ -14,7 +14,8 @@ import {
   FileText,
   AlertTriangle,
   Pause,
-  Play
+  Play,
+  Layers
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatBytes, formatSpeed, formatEta, formatPercent, formatDate } from '@/lib/format.js';
@@ -81,6 +82,12 @@ export default function DownloadDetails({
               {job.format && (
                 <span className="truncate text-xs text-t3" title={job.format}>
                   {job.format}
+                </span>
+              )}
+              {job.isSegmented && (
+                <span className="rounded-full border border-accent/40 bg-accent-soft px-2 py-0.5 text-[10px] font-semibold tracking-wider text-accent-text flex items-center gap-1">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent" />
+                  {job.activeConnections ? `${job.activeConnections} Streams` : `${job.segmentsCount || 4} Segments`}
                 </span>
               )}
             </div>
@@ -217,6 +224,43 @@ export default function DownloadDetails({
             avgSpeed={job.avgSpeed}
             height={90}
           />
+        </div>
+      )}
+
+      {/* Multi-Connection Segment Slice Breakdown */}
+      {job.isSegmented && job.segmentPlan && Array.isArray(job.segmentPlan) && (
+        <div className="mt-3 rounded-lg border border-line/50 bg-surface-2/30 p-3">
+          <div className="flex items-center justify-between text-[11px] font-medium text-t2 mb-1.5">
+            <span className="flex items-center gap-1.5">
+              <Layers style={{ width: 12, height: 12 }} className="text-accent" />
+              Segment Slices ({job.segmentsDone || 0} / {job.segmentPlan.length} Complete)
+            </span>
+            {job.activeConnections > 0 && (
+              <span className="text-[10px] text-accent-text font-semibold">
+                {job.activeConnections} active stream{job.activeConnections > 1 ? 's' : ''}
+              </span>
+            )}
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+            {job.segmentPlan.map((seg, idx) => (
+              <div key={idx} className="rounded border border-line/40 bg-surface/60 p-1.5 text-[10px]">
+                <div className="flex justify-between text-t3 font-mono">
+                  <span>Part {idx + 1}</span>
+                  <span>{formatBytes(seg.total)}</span>
+                </div>
+                <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-surface-3">
+                  <div
+                    className={`h-full transition-all duration-300 ${
+                      (job.segmentsDone || 0) > idx ? 'bg-ok' : 'bg-accent'
+                    }`}
+                    style={{
+                      width: (job.segmentsDone || 0) > idx ? '100%' : `${Math.min(100, Math.round((job.progress || 0) * 100))}%`
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
