@@ -44,7 +44,7 @@ export default function SettingsPage() {
   const [testingBridge, setTestingBridge] = useState(false);
   const { theme, setTheme } = useTheme();
 
-  // Phase 8: Storage Connections & Credentials
+  // Phase 8 & 9: Storage Connections & Credentials
   const [connections, setConnections] = useState([]);
   const [credStatus, setCredStatus] = useState(null);
   const [editOpen, setEditOpen] = useState(false);
@@ -53,7 +53,7 @@ export default function SettingsPage() {
   const [connForm, setConnForm] = useState({
     id: null,
     name: '',
-    provider_type: 'webdav',
+    provider_type: 's3',
     host: '',
     port: '',
     base_path: '',
@@ -61,7 +61,9 @@ export default function SettingsPage() {
     credential: '',
     removeCredential: false,
     allow_insecure_http: false,
-    host_key_fingerprint: ''
+    host_key_fingerprint: '',
+    region: 'us-east-1',
+    force_path_style: false
   });
 
   useEffect(() => {
@@ -166,13 +168,13 @@ export default function SettingsPage() {
     }
   }
 
-  // --- Phase 8: Storage Connection Actions ---
+  // --- Storage Connection Actions ---
 
   function openAddConn() {
     setConnForm({
       id: null,
       name: '',
-      provider_type: 'webdav',
+      provider_type: 's3',
       host: '',
       port: '',
       base_path: '',
@@ -180,7 +182,9 @@ export default function SettingsPage() {
       credential: '',
       removeCredential: false,
       allow_insecure_http: false,
-      host_key_fingerprint: ''
+      host_key_fingerprint: '',
+      region: 'us-east-1',
+      force_path_style: false
     });
     setEditOpen(true);
   }
@@ -189,7 +193,7 @@ export default function SettingsPage() {
     setConnForm({
       id: conn.id,
       name: conn.name || '',
-      provider_type: conn.provider_type || 'webdav',
+      provider_type: conn.provider_type || 's3',
       host: conn.host || '',
       port: conn.port ? String(conn.port) : '',
       base_path: conn.base_path || '',
@@ -198,6 +202,8 @@ export default function SettingsPage() {
       removeCredential: false,
       allow_insecure_http: Boolean(conn.allow_insecure_http),
       host_key_fingerprint: conn.host_key_fingerprint || '',
+      region: conn.region || 'us-east-1',
+      force_path_style: Boolean(conn.force_path_style),
       hasCredentials: conn.hasCredentials
     });
     setEditOpen(true);
@@ -231,7 +237,9 @@ export default function SettingsPage() {
         username: connForm.username,
         credential: connForm.credential,
         allowInsecureHttp: connForm.allow_insecure_http,
-        hostKeyFingerprint: connForm.host_key_fingerprint
+        hostKeyFingerprint: connForm.host_key_fingerprint,
+        region: connForm.region,
+        forcePathStyle: connForm.force_path_style
       };
       if (connForm.id && !connForm.credential) {
         payload.id = connForm.id;
@@ -261,6 +269,9 @@ export default function SettingsPage() {
     if ((connForm.provider_type === 'webdav' || connForm.provider_type === 'sftp') && !connForm.host.trim()) {
       return toast.error('Host / Server URL is required');
     }
+    if (connForm.provider_type === 's3' && !connForm.base_path.trim()) {
+      return toast.error('Bucket name is required for S3-compatible storage');
+    }
 
     try {
       await api.storage.connections.save({
@@ -274,7 +285,9 @@ export default function SettingsPage() {
         credential: connForm.credential,
         removeCredential: connForm.removeCredential,
         allowInsecureHttp: connForm.allow_insecure_http,
-        hostKeyFingerprint: connForm.host_key_fingerprint
+        hostKeyFingerprint: connForm.host_key_fingerprint,
+        region: connForm.region,
+        forcePathStyle: connForm.force_path_style
       });
       toast.success(connForm.id ? 'Connection updated' : 'Connection added');
       setEditOpen(false);
@@ -622,6 +635,7 @@ export default function SettingsPage() {
                 const isNas = conn.provider_type === 'local_nas';
                 const isWebdav = conn.provider_type === 'webdav';
                 const isSftp = conn.provider_type === 'sftp';
+                const isS3 = conn.provider_type === 's3';
                 const isTesting = testingConnId === conn.id;
 
                 return (
@@ -635,15 +649,16 @@ export default function SettingsPage() {
                           {isNas && <HardDrive className="h-4 w-4 shrink-0 text-accent" />}
                           {isWebdav && <Cloud className="h-4 w-4 shrink-0 text-info" />}
                           {isSftp && <Server className="h-4 w-4 shrink-0 text-ok" />}
+                          {isS3 && <Cloud className="h-4 w-4 shrink-0 text-purple-400" />}
                           <h3 className="text-sm font-semibold text-t1 truncate">{conn.name}</h3>
                         </div>
                         <Badge variant="outline" className="text-[10px] uppercase font-mono px-2 py-0.5 shrink-0">
-                          {conn.provider_type?.replace('_', ' ')}
+                          {conn.provider_type === 's3' ? 'S3 CLOUD' : conn.provider_type?.replace('_', ' ')}
                         </Badge>
                       </div>
 
-                      <p className="mt-2 text-xs font-mono text-t2 truncate" title={isNas ? conn.base_path : `${conn.host}${conn.port ? `:${conn.port}` : ''}`}>
-                        {isNas ? conn.base_path : `${conn.username ? `${conn.username}@` : ''}${conn.host}${conn.port ? `:${conn.port}` : ''}`}
+                      <p className="mt-2 text-xs font-mono text-t2 truncate" title={isNas ? conn.base_path : isS3 ? `s3://${conn.base_path}${conn.region ? ` (${conn.region})` : ''}` : `${conn.host}${conn.port ? `:${conn.port}` : ''}`}>
+                        {isNas ? conn.base_path : isS3 ? `s3://${conn.base_path}${conn.host ? ` • ${conn.host}` : ''}` : `${conn.username ? `${conn.username}@` : ''}${conn.host}${conn.port ? `:${conn.port}` : ''}`}
                       </p>
 
                       <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-t3">
@@ -701,11 +716,11 @@ export default function SettingsPage() {
         </div>
       </Card>
 
-      {/* Phase 8: Bandwidth Throttling Management */}
+      {/* Phase 8 & 9: Bandwidth Throttling Management */}
       <Card>
         <CardHeader
           title="Bandwidth Management"
-          subtitle="Configure upload speed limits for remote exports to prevent network congestion"
+          subtitle="Configure upload speed limits for remote exports and automated backups"
           icon={Gauge}
         />
         <div className="space-y-4 p-5">
@@ -744,7 +759,7 @@ export default function SettingsPage() {
           <div className="rounded-xl border border-line bg-surface-2/40 p-3 text-xs text-t2 leading-relaxed">
             <span className="font-semibold text-t1">Effective Limit Rule: </span>
             The transfer rate limiter enforces <code className="px-1 py-0.5 rounded bg-surface-3 font-mono text-[11px]">min(globalLimit, perTaskLimit)</code>.
-            Throttling is implemented via streaming Node Transform rate-limiters with deterministic cancellation cleanup.
+            Throttling is coordinated through a shared aggregate token bucket with per-task stream rate-limiters.
           </div>
         </div>
       </Card>
@@ -754,7 +769,7 @@ export default function SettingsPage() {
         open={editOpen}
         onClose={() => setEditOpen(false)}
         title={connForm.id ? 'Edit Storage Connection' : 'Add Storage Connection'}
-        width={520}
+        width={540}
         footer={
           <div className="flex w-full items-center justify-between">
             <Button
@@ -783,7 +798,7 @@ export default function SettingsPage() {
             <Input
               value={connForm.name}
               onChange={(e) => setConnForm((prev) => ({ ...prev, name: e.target.value }))}
-              placeholder="e.g. Home TrueNAS / VPS Cloud / Nextcloud"
+              placeholder="e.g. AWS S3 Media Vault / TrueNAS / Cloudflare R2"
             />
           </div>
 
@@ -791,14 +806,173 @@ export default function SettingsPage() {
             <Label>Provider Type</Label>
             <Select
               value={connForm.provider_type}
-              onChange={(e) => setConnForm((prev) => ({ ...prev, provider_type: e.target.value }))}
+              onChange={(e) => {
+                const val = e.target.value;
+                setConnForm((prev) => ({
+                  ...prev,
+                  provider_type: val,
+                  region: prev.region || (val === 's3' ? 'us-east-1' : '')
+                }));
+              }}
               disabled={!!connForm.id}
             >
+              <option value="s3">S3-Compatible Storage (AWS S3 / Cloudflare R2 / MinIO)</option>
               <option value="webdav">WebDAV (HTTPS Nextcloud / ownCloud / Apache)</option>
               <option value="sftp">SFTP (SSH File Transfer Protocol)</option>
               <option value="local_nas">Local NAS / Network Shared Drive</option>
             </Select>
           </div>
+
+          {connForm.provider_type === 's3' && (
+            <>
+              {!connForm.id && (
+                <div>
+                  <Label>Quick Provider Preset</Label>
+                  <div className="grid grid-cols-4 gap-2 mt-1">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      className="text-xs"
+                      onClick={() => setConnForm(prev => ({
+                        ...prev,
+                        host: '',
+                        region: 'us-east-1',
+                        force_path_style: false,
+                        allow_insecure_http: false
+                      }))}
+                    >
+                      AWS S3
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      className="text-xs"
+                      onClick={() => setConnForm(prev => ({
+                        ...prev,
+                        host: 'https://<account-id>.r2.cloudflarestorage.com',
+                        region: 'auto',
+                        force_path_style: false,
+                        allow_insecure_http: false
+                      }))}
+                    >
+                      Cloudflare R2
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      className="text-xs"
+                      onClick={() => setConnForm(prev => ({
+                        ...prev,
+                        host: 'http://127.0.0.1:9000',
+                        region: 'us-east-1',
+                        force_path_style: true,
+                        allow_insecure_http: true
+                      }))}
+                    >
+                      MinIO
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      className="text-xs"
+                      onClick={() => setConnForm(prev => ({
+                        ...prev,
+                        force_path_style: false
+                      }))}
+                    >
+                      Custom
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <Label>S3 Endpoint URL</Label>
+                <Input
+                  value={connForm.host}
+                  onChange={(e) => setConnForm((prev) => ({ ...prev, host: e.target.value }))}
+                  placeholder="https://s3.amazonaws.com (leave empty for AWS default)"
+                />
+                <p className="mt-1 text-[11px] text-t3">
+                  Leave empty for official AWS S3. For R2, MinIO, or custom endpoints, specify full HTTPS URL.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Region</Label>
+                  <Input
+                    value={connForm.region}
+                    onChange={(e) => setConnForm((prev) => ({ ...prev, region: e.target.value }))}
+                    placeholder="us-east-1 or auto"
+                  />
+                </div>
+                <div>
+                  <Label>Bucket Name</Label>
+                  <Input
+                    value={connForm.base_path}
+                    onChange={(e) => setConnForm((prev) => ({ ...prev, base_path: e.target.value }))}
+                    placeholder="my-backup-vault"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Access Key ID</Label>
+                  <Input
+                    value={connForm.username}
+                    onChange={(e) => setConnForm((prev) => ({ ...prev, username: e.target.value }))}
+                    placeholder="AKIAIOSFODNN7EXAMPLE"
+                  />
+                </div>
+                <div>
+                  <Label>Secret Access Key</Label>
+                  <Input
+                    type="password"
+                    value={connForm.credential}
+                    onChange={(e) => setConnForm((prev) => ({ ...prev, credential: e.target.value, removeCredential: false }))}
+                    placeholder={connForm.hasCredentials ? 'Saved — leave blank to keep' : 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'}
+                  />
+                </div>
+              </div>
+
+              {connForm.hasCredentials && (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="removeCredS3"
+                    checked={connForm.removeCredential}
+                    onChange={(e) => setConnForm((prev) => ({ ...prev, removeCredential: e.target.checked }))}
+                    className="rounded border-line text-err focus:ring-err/30"
+                  />
+                  <label htmlFor="removeCredS3" className="text-xs text-err font-medium cursor-pointer">
+                    Remove saved secret access key
+                  </label>
+                </div>
+              )}
+
+              <div className="space-y-2 pt-1">
+                <Toggle
+                  checked={connForm.force_path_style}
+                  onChange={(v) => setConnForm((prev) => ({ ...prev, force_path_style: v }))}
+                  label="Force Path-Style Addressing"
+                  description="Use path-style URLs (endpoint/bucket/key). Required for MinIO, Ceph, and endpoints without DNS wildcard subdomains."
+                />
+
+                <Toggle
+                  checked={connForm.allow_insecure_http}
+                  onChange={(v) => setConnForm((prev) => ({ ...prev, allow_insecure_http: v }))}
+                  label="Allow Insecure HTTP"
+                  description="Permits unencrypted http:// (e.g. local MinIO on 127.0.0.1:9000). Never transmit credentials unencrypted over public networks."
+                />
+              </div>
+            </>
+          )}
 
           {connForm.provider_type === 'local_nas' && (
             <div>
