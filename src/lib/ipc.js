@@ -1,4 +1,90 @@
-const mv = () => window.mv;
+const mv = () => {
+  if (typeof window !== 'undefined' && window.mv) return window.mv;
+  return {
+    invoke: async (channel) => {
+      if (channel === 'settings:get') {
+        return {
+          ok: true,
+          result: {
+            downloadDir: 'C:\\Downloads',
+            globalUploadLimitKBps: 0,
+            perTaskUploadLimitKBps: 0,
+            allowLocalNetwork: false
+          }
+        };
+      }
+      if (channel === 'storage:connections:list') {
+        return {
+          ok: true,
+          result: [
+            {
+              id: 'mock-s3-1',
+              name: 'AWS S3 Production Vault',
+              provider_type: 's3',
+              host: null,
+              base_path: 'mantitup-media-backups',
+              region: 'us-east-1',
+              force_path_style: 0,
+              hasCredentials: true,
+              last_success_at: Date.now() - 3600000
+            }
+          ]
+        };
+      }
+      if (channel === 'backup:schedules:list') {
+        return {
+          ok: true,
+          result: [
+            {
+              id: 'sched-mock-1',
+              name: 'Nightly S3 Cloud Vault',
+              enabled: 1,
+              source_type: 'entire_library',
+              destination_connection_id: 'mock-s3-1',
+              remote_prefix: 'backups/media/',
+              recurrence_type: 'daily',
+              daily_time: '02:00',
+              next_run_at: Date.now() + 18000000,
+              last_run_at: Date.now() - 72000000,
+              last_status: 'completed'
+            }
+          ]
+        };
+      }
+      if (channel === 'backup:runs:list') {
+        return {
+          ok: true,
+          result: [
+            {
+              id: 'run-mock-1',
+              schedule_id: 'sched-mock-1',
+              schedule_name: 'Nightly S3 Cloud Vault',
+              connection_name: 'AWS S3 Production Vault',
+              started_at: Date.now() - 72000000,
+              finished_at: Date.now() - 71800000,
+              status: 'completed',
+              items_completed: 12,
+              items_failed: 0,
+              items_skipped: 3,
+              items_total: 15,
+              bytes_transferred: 485000000
+            }
+          ]
+        };
+      }
+      if (channel === 'collections:list') {
+        return {
+          ok: true,
+          result: [
+            { id: 'col-1', name: 'Documentaries', item_count: 8 }
+          ]
+        };
+      }
+      return { ok: true, result: [] };
+    },
+    on: () => () => {}
+  };
+};
 
 export function invoke(channel, payload) {
   return mv().invoke(channel, payload).then((res) => {
