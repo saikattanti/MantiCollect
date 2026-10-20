@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { getDb } from './db.js';
@@ -7,7 +8,7 @@ import { executeJob } from './runner.js';
 import { loadSettings } from './settings.js';
 import { createTelemetryTracker } from './telemetry.js';
 
-const ACTIVE = new Set(['waiting', 'fetching_metadata', 'downloading', 'processing']);
+const ACTIVE = new Set(['waiting', 'fetching_metadata', 'downloading', 'resuming', 'pausing', 'processing']);
 
 export function publicJob(row, telemetry = null) {
   let extra = null;
@@ -71,8 +72,10 @@ export function publicJob(row, telemetry = null) {
     createdAt: row.created_at,
     startedAt: row.started_at,
     finishedAt: row.finished_at,
-    cancellable: ['waiting', 'downloading', 'processing', 'fetching_metadata'].includes(row.status),
-    resumable: row.provider !== 'direct'
+    cancellable: ['waiting', 'downloading', 'processing', 'fetching_metadata', 'pausing', 'paused', 'resuming'].includes(row.status),
+    pausable: ['downloading', 'resuming'].includes(row.status),
+    resumable: row.status === 'paused' || (row.status === 'failed' && !!row.partial_path),
+    partialPath: row.partial_path || null
   };
 }
 
@@ -160,10 +163,84 @@ export function createQueue({
     if (handle) {
       handle.cancelled = true;
       handle.cancel();
+    }
+    // Clean up temporary .part file on explicit cancellation
+    if (row.partial_path) {
+      try {
+        if (fs.existsSync(row.partial_path)) fs.unlinkSync(row.partial_path);
+      } catch {}
+    }
+    scheduleEmit();
+    return true;
+  }
+
+  function pauseJob(id) {
+    const row = db().prepare('SELECT * FROM jobs WHERE id = ?').get(id);
+    if (!row) return false;
+    // Idempotent: already paused or pausing
+    if (row.status === 'paused' || row.status === 'pausing') return true;
+    // Reject invalid state transitions
+    if (!['waiting', 'downloading', 'resuming', 'fetching_metadata'].includes(row.status)) {
+      return false;
+    }
+
+    telemetry.pause(id);
+
+    const handle = running.get(id);
+    if (handle) {
+      handle.paused = true;
+      persist(id, { status: 'pausing', speed: 0 });
+      handle.pause();
       scheduleEmit();
       return true;
     }
+
+    // If waiting in queue, immediately transition to paused
+    if (row.status === 'waiting') {
+      persist(id, { status: 'paused', speed: 0 });
+      scheduleEmit();
+      return true;
+    }
+
+    return false;
+  }
+
+  function resumeJob(id) {
+    const row = db().prepare('SELECT * FROM jobs WHERE id = ?').get(id);
+    if (!row) return false;
+    // Idempotent: already active or queued
+    if (['waiting', 'downloading', 'resuming'].includes(row.status)) return true;
+    // Only paused or failed jobs can be resumed
+    if (row.status !== 'paused' && row.status !== 'failed') return false;
+    if (running.has(id)) return true;
+
+    // Verify partial file authoritatively on disk
+    let validBytes = row.bytes_done || 0;
+    let validPath = row.partial_path;
+    if (validPath) {
+      if (fs.existsSync(validPath)) {
+        try {
+          validBytes = fs.statSync(validPath).size;
+        } catch {
+          validBytes = 0;
+        }
+      } else {
+        // Partial file disappeared: fallback to restart from 0
+        validBytes = 0;
+        validPath = null;
+      }
+    }
+
+    persist(id, {
+      status: 'waiting',
+      bytes_done: validBytes,
+      partial_path: validPath,
+      speed: 0,
+      error: null
+    });
+
     scheduleEmit();
+    pump();
     return true;
   }
 
@@ -215,10 +292,21 @@ export function createQueue({
     scheduleEmit();
 
     const handle = executeJobFn(row, {
+      allowLocal: !!s.allowLocalNetwork,
+      onMetadata: (m) => {
+        if (handle.cancelled || handle.paused) return;
+        const patch = {};
+        if (m.etag) patch.etag = m.etag;
+        if (m.lastModified) patch.last_modified = m.lastModified;
+        if (m.resumable != null) patch.resumable = m.resumable ? 1 : 0;
+        if (m.total && !row.bytes_total) patch.bytes_total = m.total;
+        if (m.partialPath && !row.partial_path) patch.partial_path = m.partialPath;
+        if (Object.keys(patch).length) persist(row.id, patch);
+      },
       onProgress: (p) => {
-        if (handle.cancelled) return;
+        if (handle.cancelled || handle.paused) return;
         const current = db().prepare('SELECT status FROM jobs WHERE id = ?').get(row.id);
-        if (current && current.status === 'cancelled') return;
+        if (!current || current.status === 'cancelled' || current.status === 'paused') return;
 
         const fields = {};
         if (p.type === 'progress') {
@@ -269,25 +357,56 @@ export function createQueue({
           telemetry.finish(row.id);
           return;
         }
+        if (res?.paused || handle.paused) {
+          telemetry.pause(row.id);
+          persist(row.id, {
+            status: 'paused',
+            speed: 0,
+            bytes_done: res?.bytes != null ? res.bytes : row.bytes_done,
+            partial_path: res?.path || row.partial_path,
+            etag: res?.etag || row.etag,
+            last_modified: res?.lastModified || row.last_modified,
+            resumable: res?.resumable != null ? (res.resumable ? 1 : 0) : row.resumable
+          });
+          logger.info('queue', `job ${row.id} safely paused at ${res?.bytes || row.bytes_done} bytes`);
+          return;
+        }
         const current = db().prepare('SELECT status FROM jobs WHERE id = ?').get(row.id);
-        if (current && current.status === 'cancelled') {
+        if (current && (current.status === 'cancelled' || current.status === 'paused')) {
           telemetry.finish(row.id);
           return;
         }
         telemetry.finish(row.id);
-        persist(row.id, { status: 'completed', progress: 1, speed: 0, result_path: res.path, finished_at: Date.now() });
+        persist(row.id, {
+          status: 'completed',
+          progress: 1,
+          bytes_done: res?.bytes != null ? res.bytes : row.bytes_done,
+          bytes_total: res?.bytes != null ? res.bytes : (row.bytes_total || res?.bytes),
+          speed: 0,
+          result_path: res.path,
+          finished_at: Date.now()
+        });
         logger.info('queue', `job ${row.id} completed -> ${res.path}`);
       })
       .catch((err) => {
         telemetry.finish(row.id);
         const cancelled = handle.cancelled || /cancel/i.test(String(err && err.message));
-        persist(row.id, {
-          status: cancelled ? 'cancelled' : 'failed',
-          speed: 0,
-          error: cancelled ? null : String(err?.message || err).slice(0, 2000),
-          finished_at: Date.now()
-        });
-        logger.error('queue', `job ${row.id} ${cancelled ? 'cancelled' : 'failed'}: ${err?.message || err}`);
+        const paused = handle.paused || /pause/i.test(String(err && err.message));
+        if (paused) {
+          persist(row.id, {
+            status: 'paused',
+            speed: 0
+          });
+          logger.info('queue', `job ${row.id} paused`);
+        } else {
+          persist(row.id, {
+            status: cancelled ? 'cancelled' : 'failed',
+            speed: 0,
+            error: cancelled ? null : String(err?.message || err).slice(0, 2000),
+            finished_at: Date.now()
+          });
+          logger.error('queue', `job ${row.id} ${cancelled ? 'cancelled' : 'failed'}: ${err?.message || err}`);
+        }
       })
       .finally(() => {
         running.delete(row.id);
@@ -312,7 +431,7 @@ export function createQueue({
   /** On startup: interrupted jobs go back to waiting so users can resume. */
   function recover() {
     const r = db()
-      .prepare(`UPDATE jobs SET status = 'waiting', error = NULL WHERE status IN ('fetching_metadata', 'downloading', 'processing')`)
+      .prepare(`UPDATE jobs SET status = 'waiting', error = NULL WHERE status IN ('fetching_metadata', 'downloading', 'processing', 'pausing', 'resuming')`)
       .run();
     if (r.changes) {
       logger.info('queue', `recovered ${r.changes} interrupted jobs`);
@@ -329,6 +448,8 @@ export function createQueue({
   return {
     listJobs,
     startJob,
+    pauseJob,
+    resumeJob,
     cancelJob,
     retryJob,
     removeJob,
