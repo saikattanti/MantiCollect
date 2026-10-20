@@ -2,7 +2,24 @@
 
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Palette, FolderDown, Cpu, ShieldAlert, ShieldCheck, Download, FolderOpen, Monitor, Moon, Sun } from 'lucide-react';
+import {
+  Palette,
+  FolderDown,
+  Cpu,
+  ShieldAlert,
+  ShieldCheck,
+  Download,
+  FolderOpen,
+  Monitor,
+  Moon,
+  Sun,
+  Globe,
+  Copy,
+  RefreshCw,
+  ExternalLink,
+  Check,
+  ClipboardCheck
+} from 'lucide-react';
 import { api, onEvent } from '@/lib/ipc.js';
 import { Button, Card, CardHeader, Input, Label, Select, Toggle, Spinner } from '@/components/ui.jsx';
 import { useTheme } from '@/lib/theme.jsx';
@@ -10,13 +27,16 @@ import { useTheme } from '@/lib/theme.jsx';
 export default function SettingsPage() {
   const [s, setS] = useState(null);
   const [bins, setBins] = useState(null);
+  const [browserInfo, setBrowserInfo] = useState(null);
   const [installing, setInstalling] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [testingBridge, setTestingBridge] = useState(false);
   const { theme, setTheme } = useTheme();
 
   useEffect(() => {
     api.settings.get().then(setS).catch(() => {});
     api.bins.status().then(setBins).catch(() => {});
+    api.browser.status().then(setBrowserInfo).catch(() => {});
     return onEvent('ytdlp:install', (p) => {
       if (p.phase === 'downloading' && p.total) setInstalling({ phase: p.phase, pct: (p.received / p.total) * 100, message: p.message });
       else setInstalling(p);
@@ -63,6 +83,46 @@ export default function SettingsPage() {
       toast.error(err.message);
     } finally {
       setInstalling(null);
+    }
+  }
+
+  async function copyToClipboard(text, label) {
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`${label} copied to clipboard`);
+    } catch {
+      toast.error('Failed to copy to clipboard');
+    }
+  }
+
+  async function handleRegenerateToken() {
+    try {
+      const res = await api.browser.regenerateToken();
+      set('browserAuthToken', res.token);
+      toast.success('Generated new browser authorization token');
+    } catch (err) {
+      toast.error(err.message);
+    }
+  }
+
+  async function handleTestBridge() {
+    setTestingBridge(true);
+    try {
+      const port = s.browserBridgePort || 52443;
+      const res = await fetch(`http://127.0.0.1:${port}/api/status`, {
+        headers: { Authorization: `Bearer ${s.browserAuthToken}` }
+      });
+      const data = await res.json();
+      if (data.ok) {
+        toast.success(`Bridge connection verified! (${data.app} v${data.version} on port ${port})`);
+      } else {
+        toast.error(`Bridge returned error: ${data.error}`);
+      }
+    } catch (err) {
+      toast.error(`Bridge unreachable on 127.0.0.1:${s.browserBridgePort || 52443}: ${err.message}`);
+    } finally {
+      setTestingBridge(false);
     }
   }
 
@@ -188,6 +248,128 @@ export default function SettingsPage() {
                 </Select>
               </div>
             )}
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Browser Integration"
+          subtitle="Send downloads from Google Chrome and Microsoft Edge to MantiCollect"
+          icon={Globe}
+        />
+        <div className="space-y-4 p-5">
+          {/* Bridge Status Bar */}
+          <div className="flex items-center justify-between rounded-xl border border-line bg-surface-2/40 p-4">
+            <div className="flex items-center gap-3">
+              <span className="relative flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-ok opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-ok"></span>
+              </span>
+              <div>
+                <p className="text-[13px] font-semibold text-t1">
+                  Local Bridge Active
+                </p>
+                <p className="text-xs text-t3">
+                  Listening on 127.0.0.1:{s.browserBridgePort || 52443} (Loopback only)
+                </p>
+              </div>
+            </div>
+            <Button variant="secondary" onClick={handleTestBridge} disabled={testingBridge}>
+              <RefreshCw className={`w-3.5 h-3.5 ${testingBridge ? 'animate-spin' : ''}`} />
+              {testingBridge ? 'Testing…' : 'Test Connection'}
+            </Button>
+          </div>
+
+          {/* Extension Installation Helper */}
+          <div className="rounded-xl border border-line bg-bg-elev/40 p-4 space-y-3">
+            <div>
+              <Label>Chromium Extension (Chrome & Edge)</Label>
+              <p className="text-xs text-t3 mb-2">
+                Load unpacked extension in <code className="px-1 py-0.5 rounded bg-surface-3 text-t2 font-mono text-[11px]">chrome://extensions</code> or <code className="px-1 py-0.5 rounded bg-surface-3 text-t2 font-mono text-[11px]">edge://extensions</code> with Developer Mode enabled:
+              </p>
+              <div className="flex items-center gap-2">
+                <Input
+                  readOnly
+                  value={browserInfo?.extensionDir || 'Loading…'}
+                  className="font-mono text-xs select-all"
+                />
+                <Button
+                  variant="secondary"
+                  onClick={() => copyToClipboard(browserInfo?.extensionDir || '', 'Extension path')}
+                  title="Copy path"
+                >
+                  <Copy className="w-3.5 h-3.5" /> Copy
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => api.browser.openExtensionDir()}
+                  title="Open folder in File Explorer"
+                >
+                  <FolderOpen className="w-3.5 h-3.5" /> Open
+                </Button>
+              </div>
+            </div>
+
+            {/* Auth Token */}
+            <div>
+              <Label>Extension Authorization Token</Label>
+              <p className="text-xs text-t3 mb-2">
+                Required for loopback bridge communication. Paste this token into the browser extension popup settings:
+              </p>
+              <div className="flex items-center gap-2">
+                <Input
+                  readOnly
+                  type="password"
+                  value={s.browserAuthToken || ''}
+                  className="font-mono text-xs select-all"
+                />
+                <Button
+                  variant="secondary"
+                  onClick={() => copyToClipboard(s.browserAuthToken || '', 'Auth token')}
+                  title="Copy token"
+                >
+                  <Copy className="w-3.5 h-3.5" /> Copy
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={handleRegenerateToken}
+                  title="Generate new token"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" /> New Token
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          {/* Toggles */}
+          <div className="space-y-3 pt-1">
+            <Toggle
+              checked={!!s.clipboardDetection}
+              onChange={(v) => set('clipboardDetection', v)}
+              label="Clipboard URL Detection (Consent-Driven)"
+              description="Detects supported media links when copied to your clipboard. Prompts for confirmation before enqueuing; never downloads automatically or logs arbitrary clipboard text."
+            />
+
+            <Toggle
+              checked={!!s.downloadInterception}
+              onChange={(v) => set('downloadInterception', v)}
+              label="Browser Download Interception"
+              description="Allows the browser extension to offer downloads initiated in Chrome or Edge directly to MantiCollect."
+            />
+          </div>
+
+          {/* Native Messaging Host Info */}
+          <div className="rounded-xl border border-line bg-surface-2/40 p-4 flex items-center justify-between">
+            <div>
+              <p className="text-[13px] font-medium text-t1">Native Messaging Host</p>
+              <p className="text-xs text-t3 mt-0.5">
+                For zero-port Chromium stdio integration, register the host via <code className="px-1 py-0.5 rounded bg-surface-3 text-t2 font-mono text-[11px]">register-host-windows.bat</code>.
+              </p>
+            </div>
+            <Button variant="secondary" onClick={() => api.browser.openHostDir()}>
+              <FolderOpen className="w-3.5 h-3.5" /> Host Scripts
+            </Button>
           </div>
         </div>
       </Card>

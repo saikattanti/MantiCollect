@@ -5,9 +5,11 @@ import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, session, shell, ipcMain, protocol } from 'electron';
 import { logger } from './logger.js';
 import { initDb, closeDb } from './db.js';
-import { ensureDirs } from './settings.js';
+import { ensureDirs, loadSettings } from './settings.js';
 import { createQueue } from './queue.js';
 import { registerIpc } from './ipc.js';
+import { createLoopbackBridge } from './bridge/loopbackServer.js';
+import { createClipboardDetector } from './clipboard.js';
 import { DEV_CSP, PROD_CSP } from '../src/lib/csp.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -23,6 +25,8 @@ bootLog('main.js loaded');
 
 let mainWindow = null;
 let queue = null;
+let bridgeServer = null;
+let clipboardDetector = null;
 
 // Privileged app scheme: the static Next.js export is served from
 // mvault://app/ so asset URLs have a real origin (file:// would break
@@ -187,6 +191,21 @@ if (!gotLock) {
                 );
                 await new Promise((r) => setTimeout(r, 300));
               }
+              if (process.env.TEST_SCROLL) {
+                await wc.executeJavaScript(
+                  `(() => {
+                    const scrollTarget = '${process.env.TEST_SCROLL}';
+                    let el = null;
+                    try { el = document.querySelector(scrollTarget); } catch {}
+                    if (el) el.scrollIntoView();
+                    else {
+                      const m = document.querySelector('main');
+                      if (m) m.scrollTop = parseInt(scrollTarget, 10) || 500;
+                    }
+                  })()`
+                );
+                await new Promise((r) => setTimeout(r, 300));
+              }
               // Positive hydration check: the client tree must be mounted
               // with real interactive elements, not just prerendered HTML.
               const probe = await wc.executeJavaScript(
@@ -329,7 +348,32 @@ if (!gotLock) {
       bootLog('db initialized');
       queue = createQueue({ getWindow: () => mainWindow });
       bootLog('queue created');
-      registerIpc({ getQueue: () => queue, getWindow: () => mainWindow });
+
+      clipboardDetector = createClipboardDetector({
+        getWindow: () => mainWindow,
+        getSettings: loadSettings
+      });
+      clipboardDetector.start();
+      bootLog('clipboard detector started');
+
+      bridgeServer = createLoopbackBridge({
+        getPort: () => loadSettings().browserBridgePort || 52443,
+        getAuthToken: () => loadSettings().browserAuthToken,
+        getQueue: () => queue,
+        getWindow: () => mainWindow,
+        getSettings: loadSettings,
+        appVersion: process.env.npm_package_version || '0.1.0'
+      });
+      bridgeServer.start().catch((err) => {
+        logger.warn('main', `Loopback bridge failed to bind: ${err?.message || err}`);
+      });
+      bootLog('bridge server started');
+
+      registerIpc({
+        getQueue: () => queue,
+        getWindow: () => mainWindow,
+        getClipboardDetector: () => clipboardDetector
+      });
       bootLog('ipc registered');
       createWindow();
       bootLog('window created');
@@ -346,6 +390,8 @@ if (!gotLock) {
 
   app.on('window-all-closed', () => {
     try {
+      if (clipboardDetector) clipboardDetector.stop();
+      if (bridgeServer) bridgeServer.stop();
       if (queue) queue.shutdown();
     } catch {}
     closeDb();
