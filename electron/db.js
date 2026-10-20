@@ -9,6 +9,9 @@ export const JOB_STATUSES = [
   'waiting',
   'fetching_metadata',
   'downloading',
+  'pausing',
+  'paused',
+  'resuming',
   'processing',
   'completed',
   'failed',
@@ -34,6 +37,10 @@ CREATE TABLE IF NOT EXISTS jobs (
   result_path TEXT,
   collection_id TEXT,
   extra TEXT,
+  partial_path TEXT,
+  etag TEXT,
+  last_modified TEXT,
+  resumable INTEGER DEFAULT 0,
   created_at INTEGER NOT NULL,
   started_at INTEGER,
   finished_at INTEGER
@@ -45,6 +52,12 @@ CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at);
 /** Pure migration; usable from tests with an in-memory DB. */
 export function migrate(db) {
   db.exec(SCHEMA);
+  // Add columns to existing databases safely without dropping tables
+  const cols = new Set(db.prepare(`PRAGMA table_info(jobs)`).all().map((c) => c.name));
+  if (!cols.has('partial_path')) db.exec(`ALTER TABLE jobs ADD COLUMN partial_path TEXT;`);
+  if (!cols.has('etag')) db.exec(`ALTER TABLE jobs ADD COLUMN etag TEXT;`);
+  if (!cols.has('last_modified')) db.exec(`ALTER TABLE jobs ADD COLUMN last_modified TEXT;`);
+  if (!cols.has('resumable')) db.exec(`ALTER TABLE jobs ADD COLUMN resumable INTEGER DEFAULT 0;`);
   return db;
 }
 
