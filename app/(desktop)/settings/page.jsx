@@ -18,10 +18,21 @@ import {
   RefreshCw,
   ExternalLink,
   Check,
-  ClipboardCheck
+  ClipboardCheck,
+  Server,
+  HardDrive,
+  Key,
+  Trash2,
+  Edit2,
+  Plus,
+  Gauge,
+  Lock,
+  Cloud,
+  CheckCircle2,
+  XCircle
 } from 'lucide-react';
 import { api, onEvent } from '@/lib/ipc.js';
-import { Button, Card, CardHeader, Input, Label, Select, Toggle, Spinner } from '@/components/ui.jsx';
+import { Button, Card, CardHeader, Input, Label, Select, Toggle, Spinner, Badge, AnimatedDialog } from '@/components/ui.jsx';
 import { useTheme } from '@/lib/theme.jsx';
 
 export default function SettingsPage() {
@@ -33,15 +44,44 @@ export default function SettingsPage() {
   const [testingBridge, setTestingBridge] = useState(false);
   const { theme, setTheme } = useTheme();
 
+  // Phase 8: Storage Connections & Credentials
+  const [connections, setConnections] = useState([]);
+  const [credStatus, setCredStatus] = useState(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [testingConnId, setTestingConnId] = useState(null);
+  const [testingForm, setTestingForm] = useState(false);
+  const [connForm, setConnForm] = useState({
+    id: null,
+    name: '',
+    provider_type: 'webdav',
+    host: '',
+    port: '',
+    base_path: '',
+    username: '',
+    credential: '',
+    removeCredential: false,
+    allow_insecure_http: false,
+    host_key_fingerprint: ''
+  });
+
   useEffect(() => {
     api.settings.get().then(setS).catch(() => {});
     api.bins.status().then(setBins).catch(() => {});
     api.browser.status().then(setBrowserInfo).catch(() => {});
+    api.credentials.status().then(setCredStatus).catch(() => {});
+    loadConnections();
     return onEvent('ytdlp:install', (p) => {
       if (p.phase === 'downloading' && p.total) setInstalling({ phase: p.phase, pct: (p.received / p.total) * 100, message: p.message });
       else setInstalling(p);
     });
   }, []);
+
+  async function loadConnections() {
+    try {
+      const list = await api.storage.connections.list();
+      setConnections(list || []);
+    } catch {}
+  }
 
   if (!s) {
     return (
@@ -123,6 +163,135 @@ export default function SettingsPage() {
       toast.error(`Bridge unreachable on 127.0.0.1:${s.browserBridgePort || 52443}: ${err.message}`);
     } finally {
       setTestingBridge(false);
+    }
+  }
+
+  // --- Phase 8: Storage Connection Actions ---
+
+  function openAddConn() {
+    setConnForm({
+      id: null,
+      name: '',
+      provider_type: 'webdav',
+      host: '',
+      port: '',
+      base_path: '',
+      username: '',
+      credential: '',
+      removeCredential: false,
+      allow_insecure_http: false,
+      host_key_fingerprint: ''
+    });
+    setEditOpen(true);
+  }
+
+  function openEditConn(conn) {
+    setConnForm({
+      id: conn.id,
+      name: conn.name || '',
+      provider_type: conn.provider_type || 'webdav',
+      host: conn.host || '',
+      port: conn.port ? String(conn.port) : '',
+      base_path: conn.base_path || '',
+      username: conn.username || '',
+      credential: '',
+      removeCredential: false,
+      allow_insecure_http: Boolean(conn.allow_insecure_http),
+      host_key_fingerprint: conn.host_key_fingerprint || '',
+      hasCredentials: conn.hasCredentials
+    });
+    setEditOpen(true);
+  }
+
+  async function handleTestConn(conn) {
+    setTestingConnId(conn.id);
+    try {
+      const res = await api.storage.connections.test({ id: conn.id });
+      if (res.ok) {
+        toast.success(`Connection verified successfully! ${res.message || ''}`);
+        loadConnections();
+      } else {
+        toast.error(`Connection test failed: ${res.message || 'Unknown error'}`);
+      }
+    } catch (err) {
+      toast.error(`Test error: ${err.message}`);
+    } finally {
+      setTestingConnId(null);
+    }
+  }
+
+  async function handleTestForm() {
+    setTestingForm(true);
+    try {
+      const payload = {
+        providerType: connForm.provider_type,
+        host: connForm.host,
+        port: connForm.port ? Number(connForm.port) : undefined,
+        basePath: connForm.base_path,
+        username: connForm.username,
+        credential: connForm.credential,
+        allowInsecureHttp: connForm.allow_insecure_http,
+        hostKeyFingerprint: connForm.host_key_fingerprint
+      };
+      if (connForm.id && !connForm.credential) {
+        payload.id = connForm.id;
+      }
+      const res = await api.storage.connections.test(payload);
+      if (res.ok) {
+        toast.success(`Connection verified! ${res.message || ''}`);
+        if (res.hostKeyFingerprint && !connForm.host_key_fingerprint) {
+          setConnForm((prev) => ({ ...prev, host_key_fingerprint: res.hostKeyFingerprint }));
+          toast.info(`Captured server host key fingerprint`);
+        }
+      } else {
+        toast.error(`Connection test failed: ${res.message || 'Unknown error'}`);
+      }
+    } catch (err) {
+      toast.error(`Test error: ${err.message}`);
+    } finally {
+      setTestingForm(false);
+    }
+  }
+
+  async function handleSaveConn() {
+    if (!connForm.name.trim()) return toast.error('Connection name is required');
+    if (connForm.provider_type === 'local_nas' && !connForm.base_path.trim()) {
+      return toast.error('Base folder path is required');
+    }
+    if ((connForm.provider_type === 'webdav' || connForm.provider_type === 'sftp') && !connForm.host.trim()) {
+      return toast.error('Host / Server URL is required');
+    }
+
+    try {
+      await api.storage.connections.save({
+        id: connForm.id,
+        name: connForm.name,
+        providerType: connForm.provider_type,
+        host: connForm.host,
+        port: connForm.port ? Number(connForm.port) : undefined,
+        basePath: connForm.base_path,
+        username: connForm.username,
+        credential: connForm.credential,
+        removeCredential: connForm.removeCredential,
+        allowInsecureHttp: connForm.allow_insecure_http,
+        hostKeyFingerprint: connForm.host_key_fingerprint
+      });
+      toast.success(connForm.id ? 'Connection updated' : 'Connection added');
+      setEditOpen(false);
+      loadConnections();
+    } catch (err) {
+      toast.error(`Save failed: ${err.message}`);
+    }
+  }
+
+  async function handleDeleteConn(id, name) {
+    if (!confirm(`Delete storage connection "${name}"? Interrupted uploads for this destination will be cleared.`)) return;
+    try {
+      await api.storage.connections.delete(id);
+      toast.success('Connection deleted');
+      loadConnections();
+    } catch (err) {
+      toast.error(`Delete failed: ${err.message}`);
     }
   }
 
@@ -399,6 +568,401 @@ export default function SettingsPage() {
           )}
         </div>
       </Card>
+
+      {/* Phase 8: Remote Storage & Cloud Export */}
+      <Card>
+        <CardHeader
+          title="Remote Storage & Cloud Export"
+          subtitle="Secure WebDAV, SFTP, and Local NAS endpoints for offloading media library files"
+          icon={Cloud}
+          actions={
+            <Button size="sm" onClick={openAddConn}>
+              <Plus className="w-3.5 h-3.5" /> Add Connection
+            </Button>
+          }
+        />
+        <div className="space-y-4 p-5">
+          {/* Hardware/OS Credential Encryption Status Notice */}
+          <div className="flex items-start gap-3 rounded-xl border border-line bg-surface-2/40 p-3.5">
+            {credStatus?.available ? (
+              <>
+                <ShieldCheck className="mt-0.5 shrink-0 text-ok" style={{ width: 16, height: 16 }} />
+                <div className="text-xs leading-relaxed text-t2">
+                  <span className="font-semibold text-t1">Hardware-backed / OS Encryption Active: </span>
+                  Credentials are protected using {credStatus?.platform === 'win32' ? 'Windows DPAPI' : credStatus?.platform === 'darwin' ? 'macOS Keychain' : 'Linux Secret Service'}.
+                  Passwords, private keys, and passphrases are never saved in plaintext and never exposed to the UI renderer.
+                </div>
+              </>
+            ) : (
+              <>
+                <ShieldAlert className="mt-0.5 shrink-0 text-warn" style={{ width: 16, height: 16 }} />
+                <div className="text-xs leading-relaxed text-warn/90">
+                  <span className="font-semibold">OS Credential Protection Unavailable: </span>
+                  Safe credential storage is not available in this operating system session. Passwords cannot be saved securely.
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Connection List */}
+          {connections.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-line p-8 text-center">
+              <Server className="mx-auto h-8 w-8 text-t3 mb-2" />
+              <p className="text-sm font-medium text-t1">No remote connections configured</p>
+              <p className="text-xs text-t3 mt-1 max-w-sm mx-auto">
+                Connect your Nextcloud, Synology, TrueNAS, VPS SFTP, or local network share to transfer downloaded media files seamlessly.
+              </p>
+              <Button size="sm" variant="secondary" className="mt-4" onClick={openAddConn}>
+                <Plus className="w-3.5 h-3.5" /> Configure First Connection
+              </Button>
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {connections.map((conn) => {
+                const isNas = conn.provider_type === 'local_nas';
+                const isWebdav = conn.provider_type === 'webdav';
+                const isSftp = conn.provider_type === 'sftp';
+                const isTesting = testingConnId === conn.id;
+
+                return (
+                  <div
+                    key={conn.id}
+                    className="flex flex-col justify-between rounded-xl border border-line bg-surface-2/30 p-4 transition-colors hover:border-line-strong"
+                  >
+                    <div>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          {isNas && <HardDrive className="h-4 w-4 shrink-0 text-accent" />}
+                          {isWebdav && <Cloud className="h-4 w-4 shrink-0 text-info" />}
+                          {isSftp && <Server className="h-4 w-4 shrink-0 text-ok" />}
+                          <h3 className="text-sm font-semibold text-t1 truncate">{conn.name}</h3>
+                        </div>
+                        <Badge variant="outline" className="text-[10px] uppercase font-mono px-2 py-0.5 shrink-0">
+                          {conn.provider_type?.replace('_', ' ')}
+                        </Badge>
+                      </div>
+
+                      <p className="mt-2 text-xs font-mono text-t2 truncate" title={isNas ? conn.base_path : `${conn.host}${conn.port ? `:${conn.port}` : ''}`}>
+                        {isNas ? conn.base_path : `${conn.username ? `${conn.username}@` : ''}${conn.host}${conn.port ? `:${conn.port}` : ''}`}
+                      </p>
+
+                      <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-t3">
+                        <span className="flex items-center gap-1">
+                          <Key className="h-3 w-3" />
+                          {conn.hasCredentials ? (
+                            <span className="text-ok">Encrypted key saved</span>
+                          ) : (
+                            <span>No secret</span>
+                          )}
+                        </span>
+                        <span>•</span>
+                        <span>
+                          {conn.last_success_at
+                            ? `Connected ${new Date(conn.last_success_at).toLocaleDateString()}`
+                            : 'Untested'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 flex items-center justify-end gap-1.5 border-t border-line/60 pt-3">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleTestConn(conn)}
+                        disabled={isTesting}
+                        title="Test connectivity"
+                      >
+                        {isTesting ? <Spinner className="w-3.5 h-3.5" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                        <span className="ml-1 text-xs">Test</span>
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => openEditConn(conn)}
+                        title="Edit connection"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                        <span className="ml-1 text-xs">Edit</span>
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        onClick={() => handleDeleteConn(conn.id, conn.name)}
+                        title="Delete connection"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </Card>
+
+      {/* Phase 8: Bandwidth Throttling Management */}
+      <Card>
+        <CardHeader
+          title="Bandwidth Management"
+          subtitle="Configure upload speed limits for remote exports to prevent network congestion"
+          icon={Gauge}
+        />
+        <div className="space-y-4 p-5">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <Label>Global Upload Limit (KB/s)</Label>
+              <Input
+                type="number"
+                min="0"
+                step="50"
+                value={s.globalUploadLimitKBps ?? 0}
+                onChange={(e) => set('globalUploadLimitKBps', Math.max(0, parseInt(e.target.value, 10) || 0))}
+                placeholder="0 = Unlimited"
+              />
+              <p className="mt-1 text-[11px] text-t3">
+                Caps the total upload bandwidth across all simultaneous uploads. Set to 0 for unlimited.
+              </p>
+            </div>
+
+            <div>
+              <Label>Per-Task Upload Limit (KB/s)</Label>
+              <Input
+                type="number"
+                min="0"
+                step="50"
+                value={s.perTaskUploadLimitKBps ?? 0}
+                onChange={(e) => set('perTaskUploadLimitKBps', Math.max(0, parseInt(e.target.value, 10) || 0))}
+                placeholder="0 = Unlimited"
+              />
+              <p className="mt-1 text-[11px] text-t3">
+                Maximum speed permitted for each individual file transfer. Set to 0 for unlimited.
+              </p>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-line bg-surface-2/40 p-3 text-xs text-t2 leading-relaxed">
+            <span className="font-semibold text-t1">Effective Limit Rule: </span>
+            The transfer rate limiter enforces <code className="px-1 py-0.5 rounded bg-surface-3 font-mono text-[11px]">min(globalLimit, perTaskLimit)</code>.
+            Throttling is implemented via streaming Node Transform rate-limiters with deterministic cancellation cleanup.
+          </div>
+        </div>
+      </Card>
+
+      {/* Add / Edit Connection Dialog */}
+      <AnimatedDialog
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        title={connForm.id ? 'Edit Storage Connection' : 'Add Storage Connection'}
+        width={520}
+        footer={
+          <div className="flex w-full items-center justify-between">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleTestForm}
+              disabled={testingForm}
+            >
+              {testingForm ? <Spinner className="w-3.5 h-3.5" /> : <RefreshCw className="w-3.5 h-3.5" />}
+              <span className="ml-1.5">{testingForm ? 'Testing…' : 'Test Connection'}</span>
+            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setEditOpen(false)}>
+                Cancel
+              </Button>
+              <Button size="sm" onClick={handleSaveConn}>
+                Save Connection
+              </Button>
+            </div>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <div>
+            <Label>Connection Name</Label>
+            <Input
+              value={connForm.name}
+              onChange={(e) => setConnForm((prev) => ({ ...prev, name: e.target.value }))}
+              placeholder="e.g. Home TrueNAS / VPS Cloud / Nextcloud"
+            />
+          </div>
+
+          <div>
+            <Label>Provider Type</Label>
+            <Select
+              value={connForm.provider_type}
+              onChange={(e) => setConnForm((prev) => ({ ...prev, provider_type: e.target.value }))}
+              disabled={!!connForm.id}
+            >
+              <option value="webdav">WebDAV (HTTPS Nextcloud / ownCloud / Apache)</option>
+              <option value="sftp">SFTP (SSH File Transfer Protocol)</option>
+              <option value="local_nas">Local NAS / Network Shared Drive</option>
+            </Select>
+          </div>
+
+          {connForm.provider_type === 'local_nas' && (
+            <div>
+              <Label>Base Folder Path</Label>
+              <div className="flex gap-2">
+                <Input
+                  value={connForm.base_path}
+                  onChange={(e) => setConnForm((prev) => ({ ...prev, base_path: e.target.value }))}
+                  placeholder="e.g. \\NAS\Media or Z:\Backups"
+                />
+                <Button
+                  variant="secondary"
+                  onClick={async () => {
+                    const r = await api.selectDirectory();
+                    if (r?.path) setConnForm((prev) => ({ ...prev, base_path: r.path }));
+                  }}
+                >
+                  <FolderOpen className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {connForm.provider_type === 'webdav' && (
+            <>
+              <div>
+                <Label>Server URL</Label>
+                <Input
+                  value={connForm.host}
+                  onChange={(e) => setConnForm((prev) => ({ ...prev, host: e.target.value }))}
+                  placeholder="https://cloud.example.com/remote.php/dav/files/user/"
+                />
+                <p className="mt-1 text-[11px] text-t3">
+                  Do not embed credentials in the URL. Passwords must be entered in the secure field below.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Username (Optional)</Label>
+                  <Input
+                    value={connForm.username}
+                    onChange={(e) => setConnForm((prev) => ({ ...prev, username: e.target.value }))}
+                    placeholder="user"
+                  />
+                </div>
+                <div>
+                  <Label>Password / App Token</Label>
+                  <Input
+                    type="password"
+                    value={connForm.credential}
+                    onChange={(e) => setConnForm((prev) => ({ ...prev, credential: e.target.value, removeCredential: false }))}
+                    placeholder={connForm.hasCredentials ? 'Saved — leave blank to keep' : 'Enter password or token'}
+                  />
+                </div>
+              </div>
+
+              {connForm.hasCredentials && (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="removeCredWebdav"
+                    checked={connForm.removeCredential}
+                    onChange={(e) => setConnForm((prev) => ({ ...prev, removeCredential: e.target.checked }))}
+                    className="rounded border-line text-err focus:ring-err/30"
+                  />
+                  <label htmlFor="removeCredWebdav" className="text-xs text-err font-medium cursor-pointer">
+                    Remove saved credential
+                  </label>
+                </div>
+              )}
+
+              <div className="pt-1">
+                <Toggle
+                  checked={connForm.allow_insecure_http}
+                  onChange={(v) => setConnForm((prev) => ({ ...prev, allow_insecure_http: v }))}
+                  label="Allow Insecure HTTP"
+                  description="Permits unencrypted http:// WebDAV. Strongly discouraged unless testing on a private LAN."
+                />
+              </div>
+            </>
+          )}
+
+          {connForm.provider_type === 'sftp' && (
+            <>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2">
+                  <Label>SFTP Host</Label>
+                  <Input
+                    value={connForm.host}
+                    onChange={(e) => setConnForm((prev) => ({ ...prev, host: e.target.value }))}
+                    placeholder="sftp.example.com or 192.168.1.50"
+                  />
+                </div>
+                <div>
+                  <Label>Port</Label>
+                  <Input
+                    type="number"
+                    value={connForm.port || '22'}
+                    onChange={(e) => setConnForm((prev) => ({ ...prev, port: e.target.value }))}
+                    placeholder="22"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <Label>Remote Base Directory</Label>
+                <Input
+                  value={connForm.base_path}
+                  onChange={(e) => setConnForm((prev) => ({ ...prev, base_path: e.target.value }))}
+                  placeholder="/home/user/uploads or /mnt/storage"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Username</Label>
+                  <Input
+                    value={connForm.username}
+                    onChange={(e) => setConnForm((prev) => ({ ...prev, username: e.target.value }))}
+                    placeholder="sftpuser"
+                  />
+                </div>
+                <div>
+                  <Label>Password / Key Passphrase</Label>
+                  <Input
+                    type="password"
+                    value={connForm.credential}
+                    onChange={(e) => setConnForm((prev) => ({ ...prev, credential: e.target.value, removeCredential: false }))}
+                    placeholder={connForm.hasCredentials ? 'Saved — leave blank to keep' : 'Enter password'}
+                  />
+                </div>
+              </div>
+
+              {connForm.hasCredentials && (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="removeCredSftp"
+                    checked={connForm.removeCredential}
+                    onChange={(e) => setConnForm((prev) => ({ ...prev, removeCredential: e.target.checked }))}
+                    className="rounded border-line text-err focus:ring-err/30"
+                  />
+                  <label htmlFor="removeCredSftp" className="text-xs text-err font-medium cursor-pointer">
+                    Remove saved credential
+                  </label>
+                </div>
+              )}
+
+              <div>
+                <Label>Trusted Host Key Fingerprint (Optional / Pinning)</Label>
+                <Input
+                  value={connForm.host_key_fingerprint}
+                  onChange={(e) => setConnForm((prev) => ({ ...prev, host_key_fingerprint: e.target.value }))}
+                  placeholder="SHA256:... (leave empty to capture on first connection test)"
+                />
+                <p className="mt-1 text-[11px] text-t3">
+                  Clicking "Test Connection" will capture and verify the server's SSH host key fingerprint to prevent MITM attacks.
+                </p>
+              </div>
+            </>
+          )}
+        </div>
+      </AnimatedDialog>
 
       <Card>
         <CardHeader
