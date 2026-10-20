@@ -7,6 +7,7 @@ import { logger } from './logger.js';
 import { executeJob } from './runner.js';
 import { loadSettings } from './settings.js';
 import { createTelemetryTracker } from './telemetry.js';
+import { cleanupSegmentFiles, inspectSegments } from './providers/segmentPlanner.js';
 
 const ACTIVE = new Set(['waiting', 'fetching_metadata', 'downloading', 'resuming', 'pausing', 'processing']);
 
@@ -75,7 +76,12 @@ export function publicJob(row, telemetry = null) {
     cancellable: ['waiting', 'downloading', 'processing', 'fetching_metadata', 'pausing', 'paused', 'resuming'].includes(row.status),
     pausable: ['downloading', 'resuming'].includes(row.status),
     resumable: row.status === 'paused' || (row.status === 'failed' && !!row.partial_path),
-    partialPath: row.partial_path || null
+    partialPath: row.partial_path || null,
+    isSegmented: !!row.is_segmented,
+    segmentsCount: row.segments_count || null,
+    segmentsDone: row.segments_done || null,
+    activeConnections: t.activeConnections != null ? t.activeConnections : (isJobActive && row.is_segmented ? (row.segments_count || 1) : 0),
+    segmentPlan: row.segment_plan ? (() => { try { return JSON.parse(row.segment_plan); } catch { return null; } })() : null
   };
 }
 
@@ -164,11 +170,12 @@ export function createQueue({
       handle.cancelled = true;
       handle.cancel();
     }
-    // Clean up temporary .part file on explicit cancellation
+    // Clean up temporary .part and segment files on explicit cancellation
     if (row.partial_path) {
       try {
         if (fs.existsSync(row.partial_path)) fs.unlinkSync(row.partial_path);
       } catch {}
+      cleanupSegmentFiles(row.partial_path);
     }
     scheduleEmit();
     return true;
@@ -218,7 +225,15 @@ export function createQueue({
     let validBytes = row.bytes_done || 0;
     let validPath = row.partial_path;
     if (validPath) {
-      if (fs.existsSync(validPath)) {
+      if (row.is_segmented && row.segment_plan) {
+        try {
+          const plan = JSON.parse(row.segment_plan);
+          const inspected = inspectSegments(validPath, plan);
+          validBytes = inspected.reduce((acc, s) => acc + s.downloaded, 0);
+        } catch {
+          validBytes = 0;
+        }
+      } else if (fs.existsSync(validPath)) {
         try {
           validBytes = fs.statSync(validPath).size;
           // Corrupted partial file larger than expected total
@@ -307,6 +322,9 @@ export function createQueue({
         if (m.resumable != null) patch.resumable = m.resumable ? 1 : 0;
         if (m.total && !row.bytes_total) patch.bytes_total = m.total;
         if (m.partialPath && !row.partial_path) patch.partial_path = m.partialPath;
+        if (m.isSegmented != null) patch.is_segmented = m.isSegmented ? 1 : 0;
+        if (m.segmentsCount != null) patch.segments_count = m.segmentsCount;
+        if (m.plan) patch.segment_plan = JSON.stringify(m.plan);
         if (Object.keys(patch).length) persist(row.id, patch);
       },
       onProgress: (p) => {
@@ -332,17 +350,23 @@ export function createQueue({
           fields.speed = 0;
           telemetry.record(row.id, { providerSpeed: 0 });
         } else if (p.received != null) {
-          // direct provider progress
+          // direct or segmented provider progress
           fields.bytes_done = p.received;
           if (p.total) fields.bytes_total = p.total;
           fields.progress = p.pct || 0;
           if (p.speed != null) fields.speed = p.speed;
           fields.status = 'downloading';
+          if (p.isSegmented) {
+            fields.is_segmented = 1;
+            if (p.segmentsDone != null) fields.segments_done = p.segmentsDone;
+            if (p.segmentsCount != null) fields.segments_count = p.segmentsCount;
+          }
 
           telemetry.record(row.id, {
             bytesDone: p.received,
             bytesTotal: p.total,
-            providerSpeed: p.speed
+            providerSpeed: p.speed,
+            activeConnections: p.activeConnections
           });
         } else if (p.type === 'done') {
           fields.progress = 1;
@@ -365,7 +389,7 @@ export function createQueue({
         }
         if (res?.paused || handle.paused) {
           telemetry.pause(row.id);
-          persist(row.id, {
+          const patch = {
             status: 'paused',
             speed: 0,
             bytes_done: res?.bytes != null ? res.bytes : row.bytes_done,
@@ -373,7 +397,10 @@ export function createQueue({
             etag: res?.etag || row.etag,
             last_modified: res?.lastModified || row.last_modified,
             resumable: res?.resumable != null ? (res.resumable ? 1 : 0) : row.resumable
-          });
+          };
+          if (res?.isSegmented != null) patch.is_segmented = res.isSegmented ? 1 : 0;
+          if (res?.plan) patch.segment_plan = JSON.stringify(res.plan);
+          persist(row.id, patch);
           logger.info('queue', `job ${row.id} safely paused at ${res?.bytes || row.bytes_done} bytes`);
           return;
         }
@@ -437,24 +464,34 @@ export function createQueue({
   /** On startup: interrupted jobs go back to waiting so users can resume. */
   function recover() {
     const interrupted = db()
-      .prepare(`SELECT id, partial_path, bytes_total FROM jobs WHERE status IN ('fetching_metadata', 'downloading', 'processing', 'pausing', 'resuming')`)
+      .prepare(`SELECT * FROM jobs WHERE status IN ('fetching_metadata', 'downloading', 'processing', 'pausing', 'resuming')`)
       .all();
     for (const job of interrupted) {
       let validBytes = 0;
       let validPath = job.partial_path;
-      if (validPath && fs.existsSync(validPath)) {
-        try {
-          validBytes = fs.statSync(validPath).size;
-          if (job.bytes_total > 0 && validBytes > job.bytes_total) {
+      if (validPath) {
+        if (job.is_segmented && job.segment_plan) {
+          try {
+            const plan = JSON.parse(job.segment_plan);
+            const inspected = inspectSegments(validPath, plan);
+            validBytes = inspected.reduce((acc, s) => acc + s.downloaded, 0);
+          } catch {
             validBytes = 0;
-            try { fs.unlinkSync(validPath); } catch {}
-            validPath = null;
           }
-        } catch {
-          validBytes = 0;
+        } else if (fs.existsSync(validPath)) {
+          try {
+            validBytes = fs.statSync(validPath).size;
+            if (job.bytes_total > 0 && validBytes > job.bytes_total) {
+              validBytes = 0;
+              try { fs.unlinkSync(validPath); } catch {}
+              validPath = null;
+            }
+          } catch {
+            validBytes = 0;
+          }
+        } else {
+          validPath = null;
         }
-      } else {
-        validPath = null;
       }
       persist(job.id, { bytes_done: validBytes, partial_path: validPath });
     }
