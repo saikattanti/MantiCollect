@@ -19,7 +19,10 @@ import {
 } from './collections.js';
 import { exportFilesToDirectory, formatMetadataAsJson, formatMetadataAsCsv } from './export.js';
 import { createConversionService, CONVERSION_PRESETS } from './converter.js';
-import { LocalNasStorageProvider } from './remoteStorage.js';
+import { LocalNasStorageProvider, WebDavStorageProvider, SftpStorageProvider } from './remoteStorage.js';
+import { isEncryptionAvailable } from './credentials.js';
+import { getStorageConnectionManager as defaultGetStorageConnMgr } from './storageConnections.js';
+import { createUploadQueue } from './uploadQueue.js';
 import { getDb } from './db.js';
 import { logger } from './logger.js';
 
@@ -32,11 +35,15 @@ export function registerIpc({
   getWindow,
   getClipboardDetector,
   getMetadataService,
-  getConversionService
+  getConversionService,
+  getStorageConnectionManager,
+  getUploadQueue
 }) {
   const settings = () => loadSettings();
   const metadataService = getMetadataService ? getMetadataService() : createMetadataService({ getDbInstance: getDb, getSettings: loadSettings });
   const conversionService = getConversionService ? getConversionService() : createConversionService({ getDbInstance: getDb, getSettings: loadSettings, getWindow });
+  const storageConnMgr = getStorageConnectionManager ? getStorageConnectionManager() : defaultGetStorageConnMgr();
+  const uploadQueue = getUploadQueue ? getUploadQueue() : createUploadQueue({ getDbInstance: getDb, getSettings: loadSettings, getWindow, getConnectionManager: () => storageConnMgr });
 
   function handle(channel, fn) {
     ipcMain.handle(channel, async (_event, payload) => {
@@ -336,6 +343,16 @@ export function registerIpc({
     }
     if (patch.clipboardDetection !== undefined) next.clipboardDetection = !!patch.clipboardDetection;
     if (patch.downloadInterception !== undefined) next.downloadInterception = !!patch.downloadInterception;
+    if (patch.globalUploadLimitKBps !== undefined) {
+      const n = Number(patch.globalUploadLimitKBps);
+      if (!Number.isFinite(n) || n < 0 || n > 10000000) throw new Error('Invalid global upload limit');
+      next.globalUploadLimitKBps = Math.floor(n);
+    }
+    if (patch.perTaskUploadLimitKBps !== undefined) {
+      const n = Number(patch.perTaskUploadLimitKBps);
+      if (!Number.isFinite(n) || n < 0 || n > 10000000) throw new Error('Invalid per-task upload limit');
+      next.perTaskUploadLimitKBps = Math.floor(n);
+    }
     return saveSettings(next);
   });
 
@@ -590,12 +607,193 @@ export function registerIpc({
     return provider.transferFile({ sourcePath, targetSubdir });
   });
 
+  /* ---------------- Phase 8: Secure Credentials & Storage Connections ---------------- */
+
+  handle('credentials:status', async () => {
+    return {
+      available: isEncryptionAvailable(),
+      platform: process.platform
+    };
+  });
+
+  handle('storage:connections:list', async () => {
+    return storageConnMgr.listConnections();
+  });
+
+  handle('storage:connections:get', async (p) => {
+    const id = requireString(p.id, 'id', 120);
+    return storageConnMgr.getConnection(id);
+  });
+
+  handle('storage:connections:save', async (p) => {
+    const name = requireString(p.name, 'name', 200);
+    const providerType = requireString(p.providerType || p.provider_type, 'providerType', 40);
+    const host = typeof p.host === 'string' ? p.host.trim() : null;
+    const port = p.port !== undefined && p.port !== null ? Number(p.port) : null;
+    const basePath = typeof (p.basePath ?? p.base_path) === 'string' ? (p.basePath ?? p.base_path).trim() : '';
+    const username = typeof p.username === 'string' ? p.username.trim() : null;
+    const allowInsecureHttp = Boolean(p.allowInsecureHttp || p.allow_insecure_http);
+    const hostKeyFingerprint = typeof (p.hostKeyFingerprint ?? p.host_key_fingerprint) === 'string' ? (p.hostKeyFingerprint ?? p.host_key_fingerprint).trim() : null;
+    const credential = typeof p.credential === 'string' && p.credential.trim() ? p.credential.trim() : null;
+    const removeCredential = Boolean(p.removeCredential);
+
+    if (p.id) {
+      const id = requireString(p.id, 'id', 120);
+      return storageConnMgr.updateConnection(id, {
+        name,
+        host,
+        port,
+        base_path: basePath,
+        username,
+        allow_insecure_http: allowInsecureHttp,
+        host_key_fingerprint: hostKeyFingerprint,
+        secret: credential,
+        removeSecret: removeCredential
+      });
+    }
+
+    return storageConnMgr.createConnection({
+      name,
+      provider_type: providerType,
+      host,
+      port,
+      base_path: basePath,
+      username,
+      allow_insecure_http: allowInsecureHttp,
+      host_key_fingerprint: hostKeyFingerprint,
+      secret: credential
+    });
+  });
+
+  handle('storage:connections:delete', async (p) => {
+    const id = requireString(p.id, 'id', 120);
+    return storageConnMgr.deleteConnection(id);
+  });
+
+  handle('storage:connections:test', async (p) => {
+    let provider;
+    const s = settings();
+    const allowLocalNetwork = Boolean(s.allowLocalNetwork);
+
+    if (p.id) {
+      const id = requireString(p.id, 'id', 120);
+      const conn = await storageConnMgr.getInternalConnection(id);
+      if (!conn) throw new Error(`Storage connection not found: ${id}`);
+
+      if (conn.provider_type === 'local_nas') {
+        provider = new LocalNasStorageProvider({ name: conn.name, basePath: conn.base_path });
+      } else if (conn.provider_type === 'webdav') {
+        provider = new WebDavStorageProvider({
+          name: conn.name,
+          serverUrl: conn.host,
+          username: conn.username,
+          password: conn.secret,
+          allowInsecureHttp: Boolean(conn.allow_insecure_http),
+          allowLocalNetwork
+        });
+      } else if (conn.provider_type === 'sftp') {
+        provider = new SftpStorageProvider({
+          name: conn.name,
+          host: conn.host,
+          port: conn.port || 22,
+          username: conn.username,
+          password: conn.secret,
+          hostKeyFingerprint: conn.host_key_fingerprint,
+          allowLocalNetwork
+        });
+      }
+    } else {
+      const providerType = requireString(p.providerType || p.provider_type, 'providerType', 40);
+      if (providerType === 'local_nas') {
+        provider = new LocalNasStorageProvider({
+          name: typeof p.name === 'string' ? p.name : 'Local NAS',
+          basePath: requireString(p.basePath || p.base_path, 'basePath', 1000)
+        });
+      } else if (providerType === 'webdav') {
+        provider = new WebDavStorageProvider({
+          name: typeof p.name === 'string' ? p.name : 'WebDAV',
+          serverUrl: requireString(p.host, 'host', 1000),
+          username: typeof p.username === 'string' ? p.username : null,
+          password: typeof p.credential === 'string' ? p.credential : null,
+          allowInsecureHttp: Boolean(p.allowInsecureHttp || p.allow_insecure_http),
+          allowLocalNetwork
+        });
+      } else if (providerType === 'sftp') {
+        provider = new SftpStorageProvider({
+          name: typeof p.name === 'string' ? p.name : 'SFTP',
+          host: requireString(p.host, 'host', 1000),
+          port: Number(p.port) || 22,
+          username: requireString(p.username, 'username', 200),
+          password: typeof p.credential === 'string' ? p.credential : null,
+          hostKeyFingerprint: typeof p.hostKeyFingerprint === 'string' ? p.hostKeyFingerprint : null,
+          allowLocalNetwork
+        });
+      } else {
+        throw new Error(`Unsupported provider type: ${providerType}`);
+      }
+    }
+
+    const testRes = await provider.testConnection();
+    if (testRes.ok && p.id) {
+      storageConnMgr.recordSuccess(p.id);
+    }
+    return testRes;
+  });
+
+  /* ---------------- Phase 8: Upload Queue ---------------- */
+
+  handle('storage:upload:start', async (p) => {
+    const connectionId = requireString(p.connectionId, 'connectionId', 120);
+    const remoteSubdir = typeof p.remoteSubdir === 'string' ? p.remoteSubdir.trim() : '';
+    const taskLimitKBps = typeof p.taskLimitKBps === 'number' ? Math.max(0, p.taskLimitKBps) : 0;
+
+    if (Array.isArray(p.sourcePaths)) {
+      const sourcePaths = requireArray(p.sourcePaths, 'sourcePaths', 500).map((x) => requireString(x, 'sourcePath', 1000));
+      return uploadQueue.enqueueBatch({
+        sourcePaths,
+        connectionId,
+        remoteSubdir,
+        taskLimitKBps
+      });
+    }
+
+    const sourcePath = requireString(p.sourcePath, 'sourcePath', 1000);
+    return uploadQueue.enqueueUpload({
+      sourcePath,
+      connectionId,
+      remotePath: remoteSubdir,
+      taskLimitKBps
+    });
+  });
+
+  handle('storage:upload:list', async (p) => {
+    const limit = typeof p.limit === 'number' ? Math.min(500, Math.max(1, p.limit)) : 100;
+    return uploadQueue.listUploads(limit);
+  });
+
+  handle('storage:upload:cancel', async (p) => {
+    const id = requireString(p.id, 'id', 120);
+    return { cancelled: uploadQueue.cancelUpload(id) };
+  });
+
+  handle('storage:upload:clear', async () => {
+    return { cleared: uploadQueue.clearCompleted() };
+  });
+
   // Emitted event references for conversion telemetry
   function emitConversionEvents(data) {
     sendToWindow('conversion:progress', data);
     sendToWindow('conversion:updated', data);
   }
 
+  // Emitted event references for telemetry verification
+  function emitUploadEvents(data) {
+    sendToWindow('upload:progress', data);
+    sendToWindow('upload:updated', data);
+  }
+
   /* ---------------- queue recovery on startup ---------------- */
   getQueue().recover();
+  uploadQueue.recover();
 }
+

@@ -62,6 +62,24 @@ export const api = {
     nasTest: (basePath) => invoke('remote:nas-test', { basePath }),
     nasTransfer: (p) => invoke('remote:nas-transfer', p)
   },
+  credentials: {
+    status: () => invoke('credentials:status')
+  },
+  storage: {
+    connections: {
+      list: () => invoke('storage:connections:list'),
+      get: (id) => invoke('storage:connections:get', { id }),
+      save: (p) => invoke('storage:connections:save', p),
+      delete: (id) => invoke('storage:connections:delete', { id }),
+      test: (p) => invoke('storage:connections:test', p)
+    },
+    upload: {
+      start: (p) => invoke('storage:upload:start', p),
+      list: (p) => invoke('storage:upload:list', p || {}),
+      cancel: (id) => invoke('storage:upload:cancel', { id }),
+      clear: () => invoke('storage:upload:clear')
+    }
+  },
   settings: {
     get: () => invoke('settings:get'),
     set: (patch) => invoke('settings:set', { patch })

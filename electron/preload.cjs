@@ -57,7 +57,17 @@ const INVOKE_CHANNELS = new Set([
   'converter:cancel',
   'converter:clear',
   'remote:nas-test',
-  'remote:nas-transfer'
+  'remote:nas-transfer',
+  'credentials:status',
+  'storage:connections:list',
+  'storage:connections:get',
+  'storage:connections:save',
+  'storage:connections:delete',
+  'storage:connections:test',
+  'storage:upload:start',
+  'storage:upload:list',
+  'storage:upload:cancel',
+  'storage:upload:clear'
 ]);
 
 const EVENT_CHANNELS = new Set([
@@ -68,7 +78,9 @@ const EVENT_CHANNELS = new Set([
   'browser:download-queued',
   'export:progress',
   'conversion:progress',
-  'conversion:updated'
+  'conversion:updated',
+  'upload:progress',
+  'upload:updated'
 ]);
 
 contextBridge.exposeInMainWorld('mv', {
