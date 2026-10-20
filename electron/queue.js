@@ -30,7 +30,10 @@ export function publicJob(row, telemetry = null) {
   const progressPercent = t.progressPercent != null ? t.progressPercent : (bytesTotal != null && bytesTotal > 0 ? Math.min(100, Math.max(0, Math.round((bytesDone / bytesTotal) * 1000) / 10)) : null);
 
   // Fallback speed from DB row if telemetry hasn't sampled yet
-  const currentSpeed = t.currentSpeed != null ? t.currentSpeed : (row.speed != null && row.speed > 0 ? Math.round(row.speed) : null);
+  const isJobActive = ACTIVE.has(row.status);
+  const currentSpeed = isJobActive
+    ? (t.currentSpeed != null ? t.currentSpeed : (row.speed != null && row.speed > 0 ? Math.round(row.speed) : null))
+    : 0;
   const filename = row.result_path ? path.basename(row.result_path) : (extra?.filename || null);
 
   return {
@@ -152,23 +155,22 @@ export function createQueue({
     const row = db().prepare('SELECT * FROM jobs WHERE id = ?').get(id);
     if (!row) return false;
     telemetry.finish(id);
+    persist(id, { status: 'cancelled', speed: 0, finished_at: Date.now() });
     const handle = running.get(id);
     if (handle) {
       handle.cancelled = true;
       handle.cancel();
-      return true;
-    }
-    if (row.status === 'waiting') {
-      persist(id, { status: 'cancelled', finished_at: Date.now() });
       scheduleEmit();
       return true;
     }
-    return false;
+    scheduleEmit();
+    return true;
   }
 
   function retryJob(id) {
     const row = db().prepare('SELECT * FROM jobs WHERE id = ?').get(id);
     if (!row || !['failed', 'cancelled', 'completed'].includes(row.status)) return false;
+    if (running.has(id)) return false;
     telemetry.remove(id);
     persist(id, {
       status: 'waiting',
@@ -202,6 +204,7 @@ export function createQueue({
   }
 
   function runJob(row) {
+    if (running.has(row.id)) return;
     const s = getSettings();
     persist(row.id, { status: 'downloading', started_at: Date.now(), error: null });
     telemetry.start(row.id, {
@@ -213,6 +216,10 @@ export function createQueue({
 
     const handle = executeJobFn(row, {
       onProgress: (p) => {
+        if (handle.cancelled) return;
+        const current = db().prepare('SELECT status FROM jobs WHERE id = ?').get(row.id);
+        if (current && current.status === 'cancelled') return;
+
         const fields = {};
         if (p.type === 'progress') {
           if (typeof p.pct === 'number') fields.progress = Math.min(1, p.pct / 100);
@@ -228,6 +235,8 @@ export function createQueue({
           });
         } else if (p.type === 'processing') {
           fields.status = 'processing';
+          fields.speed = 0;
+          telemetry.record(row.id, { providerSpeed: 0 });
         } else if (p.received != null) {
           // direct provider progress
           fields.bytes_done = p.received;
@@ -243,6 +252,7 @@ export function createQueue({
           });
         } else if (p.type === 'done') {
           fields.progress = 1;
+          fields.speed = 0;
           telemetry.finish(row.id);
         }
         if (Object.keys(fields).length) {
@@ -255,6 +265,15 @@ export function createQueue({
     running.set(row.id, handle);
     handle.promise
       .then((res) => {
+        if (handle.cancelled) {
+          telemetry.finish(row.id);
+          return;
+        }
+        const current = db().prepare('SELECT status FROM jobs WHERE id = ?').get(row.id);
+        if (current && current.status === 'cancelled') {
+          telemetry.finish(row.id);
+          return;
+        }
         telemetry.finish(row.id);
         persist(row.id, { status: 'completed', progress: 1, speed: 0, result_path: res.path, finished_at: Date.now() });
         logger.info('queue', `job ${row.id} completed -> ${res.path}`);
@@ -264,6 +283,7 @@ export function createQueue({
         const cancelled = handle.cancelled || /cancel/i.test(String(err && err.message));
         persist(row.id, {
           status: cancelled ? 'cancelled' : 'failed',
+          speed: 0,
           error: cancelled ? null : String(err?.message || err).slice(0, 2000),
           finished_at: Date.now()
         });
@@ -284,6 +304,7 @@ export function createQueue({
     while (running.size < concurrency && guard++ < 16) {
       const next = db().prepare(`SELECT * FROM jobs WHERE status = 'waiting' ORDER BY created_at ASC LIMIT 1`).get();
       if (!next) break;
+      if (running.has(next.id)) break;
       runJob(next);
     }
   }
