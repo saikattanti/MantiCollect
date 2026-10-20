@@ -219,6 +219,14 @@ export function createTelemetryTracker() {
     // Keep history snapshot until remove is called
   }
 
+  function pause(id) {
+    const state = jobs.get(id);
+    if (!state) return;
+    state.currentSpeed = null;
+    state.etaSeconds = null;
+    state.samples = [];
+  }
+
   function remove(id) {
     jobs.delete(id);
   }
@@ -227,6 +235,7 @@ export function createTelemetryTracker() {
     start,
     record,
     get,
+    pause,
     finish,
     remove
   };
