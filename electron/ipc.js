@@ -1,7 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { ipcMain, dialog, shell, BrowserWindow, app } from 'electron';
-import { loadSettings, saveSettings, ensureDirs } from './settings.js';
+import { loadSettings, saveSettings, ensureDirs, regenerateBrowserAuthToken } from './settings.js';
 import { assertPublicUrl, normalizeUrlInput, fetchWithSafeRedirects } from './security.js';
 import { resolveProvider, capabilityMatrix } from './providers/registry.js';
 import { getBinaryStatus, installYtDlp, ffmpegBinaryPath } from './bins.js';
@@ -12,7 +12,7 @@ import { logger } from './logger.js';
  * Restricted IPC surface. Every channel is whitelisted and every payload
  * is validated before use. The renderer never gets Node access.
  */
-export function registerIpc({ getQueue, getWindow }) {
+export function registerIpc({ getQueue, getWindow, getClipboardDetector }) {
   const settings = () => loadSettings();
 
   function handle(channel, fn) {
@@ -305,8 +305,74 @@ export function registerIpc({ getQueue, getWindow }) {
       if (!Number.isFinite(n) || n < 5000 || n > 120000) throw new Error('Probe timeout must be 5000-120000 ms');
       next.probeTimeoutMs = n;
     }
+    if (patch.browserIntegrationEnabled !== undefined) next.browserIntegrationEnabled = !!patch.browserIntegrationEnabled;
+    if (patch.browserBridgePort !== undefined) {
+      const port = Number(patch.browserBridgePort);
+      if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Port must be between 1024 and 65535');
+      next.browserBridgePort = port;
+    }
+    if (patch.clipboardDetection !== undefined) next.clipboardDetection = !!patch.clipboardDetection;
+    if (patch.downloadInterception !== undefined) next.downloadInterception = !!patch.downloadInterception;
     return saveSettings(next);
   });
+
+  /* ---------------- browser integration & clipboard ---------------- */
+
+  handle('browser:status', async () => {
+    const s = settings();
+    const appRoot = app?.getAppPath ? app.getAppPath() : process.cwd();
+    const extDir = path.resolve(appRoot, 'browser-extension');
+    const nativeHostDir = path.resolve(appRoot, 'native-host');
+    return {
+      enabled: Boolean(s.browserIntegrationEnabled),
+      port: s.browserBridgePort || 52443,
+      token: s.browserAuthToken || '',
+      extensionDir: extDir,
+      nativeHostDir: nativeHostDir,
+      clipboardDetection: Boolean(s.clipboardDetection),
+      downloadInterception: Boolean(s.downloadInterception)
+    };
+  });
+
+  handle('browser:regenerate-token', async () => {
+    const next = regenerateBrowserAuthToken();
+    return { token: next.browserAuthToken };
+  });
+
+  handle('browser:open-extension-dir', async () => {
+    const appRoot = app?.getAppPath ? app.getAppPath() : process.cwd();
+    const extDir = path.resolve(appRoot, 'browser-extension');
+    if (fs.existsSync(extDir)) {
+      shell.openPath(extDir);
+      return { opened: true, path: extDir };
+    }
+    return { opened: false, error: 'Directory not found' };
+  });
+
+  handle('browser:open-host-dir', async () => {
+    const appRoot = app?.getAppPath ? app.getAppPath() : process.cwd();
+    const hostDir = path.resolve(appRoot, 'native-host');
+    if (fs.existsSync(hostDir)) {
+      shell.openPath(hostDir);
+      return { opened: true, path: hostDir };
+    }
+    return { opened: false, error: 'Directory not found' };
+  });
+
+  handle('clipboard:get-detected', async () => {
+    return { url: getClipboardDetector?.()?.getLastDetectedUrl() || null };
+  });
+
+  handle('clipboard:clear', async () => {
+    getClipboardDetector?.()?.clearLastDetectedUrl();
+    return { cleared: true };
+  });
+
+  // Emitted events references for telemetry and bridge updates
+  function emitBridgeEvents(data) {
+    sendToWindow('clipboard:detected', data);
+    sendToWindow('browser:download-queued', data);
+  }
 
   /* ---------------- platforms ---------------- */
 

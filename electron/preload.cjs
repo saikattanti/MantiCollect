@@ -29,10 +29,22 @@ const INVOKE_CHANNELS = new Set([
   'window:toggle-maximize',
   'window:close',
   'window:get-state',
-  'window:set-theme'
+  'window:set-theme',
+  'browser:status',
+  'browser:regenerate-token',
+  'browser:open-extension-dir',
+  'browser:open-host-dir',
+  'clipboard:get-detected',
+  'clipboard:clear'
 ]);
 
-const EVENT_CHANNELS = new Set(['jobs:updated', 'zip:progress', 'ytdlp:install']);
+const EVENT_CHANNELS = new Set([
+  'jobs:updated',
+  'zip:progress',
+  'ytdlp:install',
+  'clipboard:detected',
+  'browser:download-queued'
+]);
 
 contextBridge.exposeInMainWorld('mv', {
   invoke(channel, payload) {

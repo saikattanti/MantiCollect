@@ -50,5 +50,15 @@ export const api = {
     toggleMaximize: () => invoke('window:toggle-maximize'),
     close: () => invoke('window:close'),
     getState: () => invoke('window:get-state')
+  },
+  browser: {
+    status: () => invoke('browser:status'),
+    regenerateToken: () => invoke('browser:regenerate-token'),
+    openExtensionDir: () => invoke('browser:open-extension-dir'),
+    openHostDir: () => invoke('browser:open-host-dir')
+  },
+  clipboard: {
+    getDetected: () => invoke('clipboard:get-detected'),
+    clear: () => invoke('clipboard:clear')
   }
 };
