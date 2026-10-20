@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { resolveProvider, directDownload } from './providers/registry.js';
+import { resolveProvider, directDownload, DIRECT, allProviders } from './providers/registry.js';
 import { loadSettings } from './settings.js';
 import { ffmpegDirectory, resolveYtDlp } from './bins.js';
 import { assertPublicUrl } from './security.js';
@@ -28,7 +28,13 @@ export function executeJob(job, hooks = {}) {
 
   let provider;
   try {
-    provider = resolveProvider(job.url);
+    if (job.provider === 'direct') {
+      provider = DIRECT;
+    } else if (job.provider) {
+      provider = allProviders().find((p) => p.id === job.provider) || resolveProvider(job.url);
+    } else {
+      provider = resolveProvider(job.url);
+    }
   } catch (err) {
     return { promise: Promise.reject(new Error(err.message)), cancel() {} };
   }
@@ -40,14 +46,21 @@ export function executeJob(job, hooks = {}) {
   const guard = assertPublicUrl(job.url, { allowLocal: ctx.allowLocal });
 
   if (provider.isDirect) {
-    const controller = new AbortController();
+    const cancelController = new AbortController();
+    const pauseController = new AbortController();
     const handle = {
       cancelled: false,
+      paused: false,
       promise: null,
       cancel() {
         if (handle.cancelled) return;
         handle.cancelled = true;
-        controller.abort();
+        cancelController.abort();
+      },
+      pause() {
+        if (handle.paused || handle.cancelled) return;
+        handle.paused = true;
+        pauseController.abort();
       }
     };
 
@@ -66,18 +79,28 @@ export function executeJob(job, hooks = {}) {
           err.name = 'AbortError';
           throw err;
         }
+        if (handle.paused) {
+          return { paused: true, path: job.partial_path, bytes: job.bytes_done || 0 };
+        }
         return directDownload(job.url, destDir, {
           allowLocal: ctx.allowLocal,
           maxBytes: ctx.maxBytes,
           overwrite: settings.overwrite,
           filename: extra.filename || undefined,
-          signal: controller.signal,
+          signal: cancelController.signal,
+          pauseSignal: pauseController.signal,
+          isResume: job.status === 'resuming' || (job.bytes_done > 0 && !!job.partial_path),
+          partialPath: job.partial_path || null,
+          etag: job.etag || null,
+          lastModified: job.last_modified || null,
+          preservePartialOnError: true,
+          onMetadata: hooks.onMetadata,
           onProgress: (p) => {
-            if (!handle.cancelled) hooks.onProgress?.(p);
+            if (!handle.cancelled && !handle.paused) hooks.onProgress?.(p);
           }
         });
       })
-      .then((r) => ({ path: r.path }));
+      .then((r) => r);
 
     return handle;
   }
@@ -87,10 +110,16 @@ export function executeJob(job, hooks = {}) {
   let dlHandle = null;
   const handle = {
     cancelled: false,
+    paused: false,
     promise: null,
     cancel() {
       if (handle.cancelled) return;
       handle.cancelled = true;
+      if (dlHandle) dlHandle.cancel();
+    },
+    pause() {
+      if (handle.paused || handle.cancelled) return;
+      handle.paused = true;
       if (dlHandle) dlHandle.cancel();
     }
   };
@@ -119,7 +148,7 @@ export function executeJob(job, hooks = {}) {
             playlistItems: extra.playlistItems || null,
             expectedId: extra.expectedId || null,
             onProgress: (ev) => {
-              if (!handle.cancelled) hooks.onProgress?.(ev);
+              if (!handle.cancelled && !handle.paused) hooks.onProgress?.(ev);
             }
           },
           { ...ctx, ytdlpBin: bin }
