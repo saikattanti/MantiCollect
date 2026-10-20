@@ -18,7 +18,8 @@ import {
   Settings as SettingsIcon,
   Info,
   PanelLeftClose,
-  PanelLeftOpen
+  PanelLeftOpen,
+  CloudUpload
 } from 'lucide-react';
 import { api, onEvent } from '../lib/ipc.js';
 
@@ -44,6 +45,7 @@ const GROUPS = [
     items: [
       { to: '/queue', label: 'Download Queue', icon: Loader, badge: true },
       { to: '/library', label: 'Library', icon: Library },
+      { to: '/backups', label: 'Cloud Backups', icon: CloudUpload },
       { to: '/history', label: 'History', icon: History }
     ]
   },
