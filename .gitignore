@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Production builds
+dist/
+release/
+vendor/
+
+# Next.js build output & cache
+.next/
+out/
+
+# Assistant / IDE scratch
+.qwen/
+
+# Runtime / Temp files
+*.log
+*.part
+.DS_Store
+Thumbs.db
+
