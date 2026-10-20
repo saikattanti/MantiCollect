@@ -11,6 +11,8 @@ import { Progress } from './ui/progress.jsx';
 import { Badge } from './ui/badge.jsx';
 import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from './ui/dialog.jsx';
 
+export { Badge, Progress };
+
 const BTN_VARIANT = { primary: 'default', secondary: 'secondary', ghost: 'ghost', danger: 'destructive', outline: 'outline' };
 const BTN_SIZE = { sm: 'sm', md: 'default', lg: 'lg' };
 

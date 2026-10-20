@@ -30,7 +30,37 @@ export const api = {
     thumbnail: (p) => invoke('library:thumbnail', { path: p }),
     delete: (paths) => invoke('library:delete', { paths }),
     zip: (paths) => invoke('library:zip', { paths }),
-    missing: () => invoke('library:missing')
+    missing: () => invoke('library:missing'),
+    query: (params) => invoke('library:query', params || {}),
+    probeFile: (filePath) => invoke('library:probe-file', { filePath }),
+    probeBatch: (filePaths) => invoke('library:probe-batch', { filePaths })
+  },
+  collections: {
+    list: () => invoke('collections:list'),
+    get: (id) => invoke('collections:get', { id }),
+    create: (p) => invoke('collections:create', p),
+    rename: (id, name) => invoke('collections:rename', { id, name }),
+    delete: (id) => invoke('collections:delete', { id }),
+    addItems: (collectionId, itemPaths) => invoke('collections:add-items', { collectionId, itemPaths }),
+    removeItems: (collectionId, itemPaths) => invoke('collections:remove-items', { collectionId, itemPaths })
+  },
+  export: {
+    selectDir: () => invoke('export:select-dir'),
+    selectFile: (p) => invoke('export:select-file', p || {}),
+    files: (filePaths, targetDir) => invoke('export:files', { filePaths, targetDir }),
+    json: (items, targetPath) => invoke('export:json', { items, targetPath }),
+    csv: (items, targetPath) => invoke('export:csv', { items, targetPath })
+  },
+  converter: {
+    presets: () => invoke('converter:presets'),
+    list: () => invoke('converter:list'),
+    start: (p) => invoke('converter:start', p),
+    cancel: (taskId) => invoke('converter:cancel', { taskId }),
+    clear: () => invoke('converter:clear')
+  },
+  remote: {
+    nasTest: (basePath) => invoke('remote:nas-test', { basePath }),
+    nasTransfer: (p) => invoke('remote:nas-transfer', p)
   },
   settings: {
     get: () => invoke('settings:get'),
