@@ -19,10 +19,11 @@ import {
 } from './collections.js';
 import { exportFilesToDirectory, formatMetadataAsJson, formatMetadataAsCsv } from './export.js';
 import { createConversionService, CONVERSION_PRESETS } from './converter.js';
-import { LocalNasStorageProvider, WebDavStorageProvider, SftpStorageProvider } from './remoteStorage.js';
+import { LocalNasStorageProvider, WebDavStorageProvider, SftpStorageProvider, S3StorageProvider } from './remoteStorage.js';
 import { isEncryptionAvailable } from './credentials.js';
 import { getStorageConnectionManager as defaultGetStorageConnMgr } from './storageConnections.js';
 import { createUploadQueue } from './uploadQueue.js';
+import { getBackupScheduler as defaultGetBackupScheduler } from './backupScheduler.js';
 import { getDb } from './db.js';
 import { logger } from './logger.js';
 
@@ -37,13 +38,15 @@ export function registerIpc({
   getMetadataService,
   getConversionService,
   getStorageConnectionManager,
-  getUploadQueue
+  getUploadQueue,
+  getBackupScheduler
 }) {
   const settings = () => loadSettings();
   const metadataService = getMetadataService ? getMetadataService() : createMetadataService({ getDbInstance: getDb, getSettings: loadSettings });
   const conversionService = getConversionService ? getConversionService() : createConversionService({ getDbInstance: getDb, getSettings: loadSettings, getWindow });
   const storageConnMgr = getStorageConnectionManager ? getStorageConnectionManager() : defaultGetStorageConnMgr();
   const uploadQueue = getUploadQueue ? getUploadQueue() : createUploadQueue({ getDbInstance: getDb, getSettings: loadSettings, getWindow, getConnectionManager: () => storageConnMgr });
+  const backupScheduler = getBackupScheduler ? getBackupScheduler() : defaultGetBackupScheduler({ getDbInstance: getDb, getWindow, getConnectionManager: () => storageConnMgr, getUploadQueueInstance: () => uploadQueue });
 
   function handle(channel, fn) {
     ipcMain.handle(channel, async (_event, payload) => {
@@ -634,7 +637,9 @@ export function registerIpc({
     const username = typeof p.username === 'string' ? p.username.trim() : null;
     const allowInsecureHttp = Boolean(p.allowInsecureHttp || p.allow_insecure_http);
     const hostKeyFingerprint = typeof (p.hostKeyFingerprint ?? p.host_key_fingerprint) === 'string' ? (p.hostKeyFingerprint ?? p.host_key_fingerprint).trim() : null;
-    const credential = typeof p.credential === 'string' && p.credential.trim() ? p.credential.trim() : null;
+    const region = typeof p.region === 'string' ? p.region.trim() : null;
+    const forcePathStyle = Boolean(p.forcePathStyle || p.force_path_style);
+    const credential = (typeof p.credential === 'object' && p.credential) || (typeof p.credential === 'string' && p.credential.trim()) ? p.credential : null;
     const removeCredential = Boolean(p.removeCredential);
 
     if (p.id) {
@@ -647,6 +652,8 @@ export function registerIpc({
         username,
         allow_insecure_http: allowInsecureHttp,
         host_key_fingerprint: hostKeyFingerprint,
+        region,
+        force_path_style: forcePathStyle,
         secret: credential,
         removeSecret: removeCredential
       });
@@ -661,6 +668,8 @@ export function registerIpc({
       username,
       allow_insecure_http: allowInsecureHttp,
       host_key_fingerprint: hostKeyFingerprint,
+      region,
+      force_path_style: forcePathStyle,
       secret: credential
     });
   });
@@ -701,6 +710,41 @@ export function registerIpc({
           hostKeyFingerprint: conn.host_key_fingerprint,
           allowLocalNetwork
         });
+      } else if (conn.provider_type === 's3') {
+        let accessKeyId = conn.username;
+        let secretAccessKey = null;
+        let sessionToken = null;
+        if (typeof conn.secret === 'object' && conn.secret) {
+          accessKeyId = conn.secret.accessKeyId || accessKeyId;
+          secretAccessKey = conn.secret.secretAccessKey;
+          sessionToken = conn.secret.sessionToken;
+        } else if (typeof conn.secret === 'string') {
+          try {
+            const parsed = JSON.parse(conn.secret);
+            if (parsed && typeof parsed === 'object') {
+              accessKeyId = parsed.accessKeyId || accessKeyId;
+              secretAccessKey = parsed.secretAccessKey;
+              sessionToken = parsed.sessionToken;
+            } else {
+              secretAccessKey = conn.secret;
+            }
+          } catch {
+            secretAccessKey = conn.secret;
+          }
+        }
+
+        provider = new S3StorageProvider({
+          name: conn.name,
+          endpoint: conn.host,
+          region: conn.region || 'us-east-1',
+          bucket: conn.base_path,
+          accessKeyId,
+          secretAccessKey,
+          sessionToken,
+          forcePathStyle: Boolean(conn.force_path_style),
+          allowInsecureHttp: Boolean(conn.allow_insecure_http),
+          allowLocalNetwork
+        });
       }
     } else {
       const providerType = requireString(p.providerType || p.provider_type, 'providerType', 40);
@@ -726,6 +770,41 @@ export function registerIpc({
           username: requireString(p.username, 'username', 200),
           password: typeof p.credential === 'string' ? p.credential : null,
           hostKeyFingerprint: typeof p.hostKeyFingerprint === 'string' ? p.hostKeyFingerprint : null,
+          allowLocalNetwork
+        });
+      } else if (providerType === 's3') {
+        let accessKeyId = typeof p.username === 'string' ? p.username : null;
+        let secretAccessKey = null;
+        let sessionToken = null;
+        if (typeof p.credential === 'object' && p.credential) {
+          accessKeyId = p.credential.accessKeyId || accessKeyId;
+          secretAccessKey = p.credential.secretAccessKey;
+          sessionToken = p.credential.sessionToken;
+        } else if (typeof p.credential === 'string') {
+          try {
+            const parsed = JSON.parse(p.credential);
+            if (parsed && typeof parsed === 'object') {
+              accessKeyId = parsed.accessKeyId || accessKeyId;
+              secretAccessKey = parsed.secretAccessKey;
+              sessionToken = parsed.sessionToken;
+            } else {
+              secretAccessKey = p.credential;
+            }
+          } catch {
+            secretAccessKey = p.credential;
+          }
+        }
+
+        provider = new S3StorageProvider({
+          name: typeof p.name === 'string' ? p.name : 'S3',
+          endpoint: typeof p.host === 'string' ? p.host : null,
+          region: typeof p.region === 'string' ? p.region : 'us-east-1',
+          bucket: requireString(p.basePath || p.base_path, 'basePath', 1000),
+          accessKeyId,
+          secretAccessKey,
+          sessionToken,
+          forcePathStyle: Boolean(p.forcePathStyle || p.force_path_style),
+          allowInsecureHttp: Boolean(p.allowInsecureHttp || p.allow_insecure_http),
           allowLocalNetwork
         });
       } else {
@@ -780,6 +859,48 @@ export function registerIpc({
     return { cleared: uploadQueue.clearCompleted() };
   });
 
+  /* ---------------- Phase 9: Backup Scheduler ---------------- */
+
+  handle('backup:schedule:list', async () => {
+    return backupScheduler.listSchedules();
+  });
+
+  handle('backup:schedule:get', async (p) => {
+    const id = requireString(p.id, 'id', 120);
+    return backupScheduler.getSchedule(id);
+  });
+
+  handle('backup:schedule:save', async (p) => {
+    return backupScheduler.saveSchedule(p);
+  });
+
+  handle('backup:schedule:delete', async (p) => {
+    const id = requireString(p.id, 'id', 120);
+    return backupScheduler.deleteSchedule(id);
+  });
+
+  handle('backup:schedule:toggle', async (p) => {
+    const id = requireString(p.id, 'id', 120);
+    const enabled = Boolean(p.enabled);
+    return backupScheduler.toggleSchedule(id, enabled);
+  });
+
+  handle('backup:schedule:run-now', async (p) => {
+    const id = requireString(p.id, 'id', 120);
+    backupScheduler.executeSchedule(id, true);
+    return { ok: true, id };
+  });
+
+  handle('backup:run:list', async (p) => {
+    const limit = typeof p.limit === 'number' ? Math.min(200, Math.max(1, p.limit)) : 50;
+    return backupScheduler.listRuns(limit);
+  });
+
+  handle('backup:run:get', async (p) => {
+    const id = requireString(p.id, 'id', 120);
+    return backupScheduler.getRunDetails(id);
+  });
+
   // Emitted event references for conversion telemetry
   function emitConversionEvents(data) {
     sendToWindow('conversion:progress', data);
@@ -792,8 +913,15 @@ export function registerIpc({
     sendToWindow('upload:updated', data);
   }
 
-  /* ---------------- queue recovery on startup ---------------- */
+  // Emitted event references for backup scheduling & run telemetry
+  function emitBackupEvents(data) {
+    sendToWindow('backup:schedules:updated', data);
+    sendToWindow('backup:runs:updated', data);
+  }
+
+  /* ---------------- queue & scheduler recovery on startup ---------------- */
   getQueue().recover();
   uploadQueue.recover();
+  backupScheduler.recover();
 }
 

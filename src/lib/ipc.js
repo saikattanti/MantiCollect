@@ -80,6 +80,20 @@ export const api = {
       clear: () => invoke('storage:upload:clear')
     }
   },
+  backup: {
+    schedules: {
+      list: () => invoke('backup:schedule:list'),
+      get: (id) => invoke('backup:schedule:get', { id }),
+      save: (p) => invoke('backup:schedule:save', p),
+      delete: (id) => invoke('backup:schedule:delete', { id }),
+      toggle: (id, enabled) => invoke('backup:schedule:toggle', { id, enabled }),
+      runNow: (id) => invoke('backup:schedule:run-now', { id })
+    },
+    runs: {
+      list: (p) => invoke('backup:run:list', p || {}),
+      get: (id) => invoke('backup:run:get', { id })
+    }
+  },
   settings: {
     get: () => invoke('settings:get'),
     set: (patch) => invoke('settings:set', { patch })

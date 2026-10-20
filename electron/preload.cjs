@@ -67,7 +67,15 @@ const INVOKE_CHANNELS = new Set([
   'storage:upload:start',
   'storage:upload:list',
   'storage:upload:cancel',
-  'storage:upload:clear'
+  'storage:upload:clear',
+  'backup:schedule:list',
+  'backup:schedule:get',
+  'backup:schedule:save',
+  'backup:schedule:delete',
+  'backup:schedule:toggle',
+  'backup:schedule:run-now',
+  'backup:run:list',
+  'backup:run:get'
 ]);
 
 const EVENT_CHANNELS = new Set([
@@ -80,7 +88,9 @@ const EVENT_CHANNELS = new Set([
   'conversion:progress',
   'conversion:updated',
   'upload:progress',
-  'upload:updated'
+  'upload:updated',
+  'backup:schedules:updated',
+  'backup:runs:updated'
 ]);
 
 contextBridge.exposeInMainWorld('mv', {
