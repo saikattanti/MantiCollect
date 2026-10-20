@@ -7,9 +7,10 @@ import { getStorageConnectionManager } from './storageConnections.js';
 import {
   LocalNasStorageProvider,
   WebDavStorageProvider,
-  SftpStorageProvider
+  SftpStorageProvider,
+  S3StorageProvider
 } from './remoteStorage.js';
-import { calculateEffectiveBandwidthLimit } from './bandwidth.js';
+import { calculateEffectiveBandwidthLimit, getGlobalUploadLimiter } from './bandwidth.js';
 import { logger } from './logger.js';
 
 /**
@@ -201,14 +202,51 @@ export function createUploadQueue({
           hostKeyFingerprint: conn.host_key_fingerprint,
           allowLocalNetwork
         });
+      } else if (conn.provider_type === 's3') {
+        let accessKeyId = conn.username;
+        let secretAccessKey = null;
+        let sessionToken = null;
+        if (typeof conn.secret === 'object' && conn.secret) {
+          accessKeyId = conn.secret.accessKeyId || accessKeyId;
+          secretAccessKey = conn.secret.secretAccessKey;
+          sessionToken = conn.secret.sessionToken;
+        } else if (typeof conn.secret === 'string') {
+          try {
+            const parsed = JSON.parse(conn.secret);
+            if (parsed && typeof parsed === 'object') {
+              accessKeyId = parsed.accessKeyId || accessKeyId;
+              secretAccessKey = parsed.secretAccessKey;
+              sessionToken = parsed.sessionToken;
+            } else {
+              secretAccessKey = conn.secret;
+            }
+          } catch {
+            secretAccessKey = conn.secret;
+          }
+        }
+
+        provider = new S3StorageProvider({
+          name: conn.name,
+          endpoint: conn.host,
+          region: conn.region || 'us-east-1',
+          bucket: conn.base_path,
+          accessKeyId,
+          secretAccessKey,
+          sessionToken,
+          forcePathStyle: Boolean(conn.force_path_style),
+          allowInsecureHttp: Boolean(conn.allow_insecure_http),
+          allowLocalNetwork
+        });
       } else {
         throw new Error(`Unsupported provider type: ${conn.provider_type}`);
       }
 
-      // Calculate effective rate limit
+      // Configure shared global upload limiter and per-task limits
+      const globalLimiter = getGlobalUploadLimiter();
       const globalLimitBytes = (s.globalUploadLimitKBps || 0) * 1024;
-      const taskLimitBytes = (s.perTaskUploadLimitKBps || 0) * 1024;
-      const effectiveRateLimit = calculateEffectiveBandwidthLimit(globalLimitBytes, taskLimitBytes);
+      globalLimiter.setRateLimit(globalLimitBytes);
+
+      const taskLimitBytes = (task.taskLimitKBps || s.perTaskUploadLimitKBps || 0) * 1024;
 
       persist(id, { status: 'uploading', updated_at: Date.now() });
       sendToWindow('upload:updated', listUploads());
@@ -218,7 +256,8 @@ export function createUploadQueue({
         sourcePath: source_path,
         targetSubdir: remote_path,
         abortSignal: controller.signal,
-        rateLimitBytesPerSec: effectiveRateLimit,
+        rateLimitBytesPerSec: taskLimitBytes,
+        globalLimiter,
         onProgress: (p) => {
           const now = Date.now();
           if (now - lastEmit >= 250 || p.percent === 100) {
