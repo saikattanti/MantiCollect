@@ -29,7 +29,12 @@ import {
   Lock,
   Cloud,
   CheckCircle2,
-  XCircle
+  XCircle,
+  AppWindow,
+  Bell,
+  BellRing,
+  Info,
+  RotateCw
 } from 'lucide-react';
 import { api, onEvent } from '@/lib/ipc.js';
 import { Button, Card, CardHeader, Input, Label, Select, Toggle, Spinner, Badge, AnimatedDialog } from '@/components/ui.jsx';
@@ -66,16 +71,29 @@ export default function SettingsPage() {
     force_path_style: false
   });
 
+  // Phase 10: Desktop Behavior, Notifications & Updater
+  const [updaterStatus, setUpdaterStatus] = useState(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [testingNotif, setTestingNotif] = useState(false);
+
   useEffect(() => {
     api.settings.get().then(setS).catch(() => {});
     api.bins.status().then(setBins).catch(() => {});
     api.browser.status().then(setBrowserInfo).catch(() => {});
     api.credentials.status().then(setCredStatus).catch(() => {});
+    api.updater.status().then(setUpdaterStatus).catch(() => {});
     loadConnections();
-    return onEvent('ytdlp:install', (p) => {
+    const unsubUpdater = onEvent('updater:status', (status) => {
+      setUpdaterStatus(status);
+    });
+    const unsubInstall = onEvent('ytdlp:install', (p) => {
       if (p.phase === 'downloading' && p.total) setInstalling({ phase: p.phase, pct: (p.received / p.total) * 100, message: p.message });
       else setInstalling(p);
     });
+    return () => {
+      unsubUpdater?.();
+      unsubInstall?.();
+    };
   }, []);
 
   async function loadConnections() {
@@ -165,6 +183,52 @@ export default function SettingsPage() {
       toast.error(`Bridge unreachable on 127.0.0.1:${s.browserBridgePort || 52443}: ${err.message}`);
     } finally {
       setTestingBridge(false);
+    }
+  }
+
+  async function handleCheckUpdate() {
+    setCheckingUpdate(true);
+    try {
+      const res = await api.updater.check(true);
+      setUpdaterStatus(res);
+      if (res?.state === 'up-to-date') {
+        toast.success('MantiCollect is up to date.');
+      } else if (res?.state === 'unsupported_dev') {
+        toast.info('Development build: auto-updates are disabled in unpacked mode.');
+      } else if (res?.state === 'available') {
+        toast.info(`Update ${res?.availableVersion} is available.`);
+      }
+    } catch (err) {
+      toast.error(err.message || 'Failed to check for updates');
+    } finally {
+      setCheckingUpdate(false);
+    }
+  }
+
+  async function handleInstallUpdate() {
+    try {
+      await api.updater.install();
+    } catch (err) {
+      toast.error(`Install error: ${err.message}`);
+    }
+  }
+
+  async function handleTestNotification() {
+    setTestingNotif(true);
+    try {
+      const res = await api.notifications.test({
+        title: 'MantiCollect Notifications',
+        body: 'Native desktop notifications are functioning correctly.'
+      });
+      if (res?.shown) {
+        toast.success('Test desktop notification sent');
+      } else {
+        toast.info('Notifications are disabled in settings or unavailable on this system.');
+      }
+    } catch (err) {
+      toast.error(`Notification test failed: ${err.message}`);
+    } finally {
+      setTestingNotif(false);
     }
   }
 
@@ -1162,6 +1226,222 @@ export default function SettingsPage() {
               Use cookies.txt only for accounts and content you are authorized to access. Bypassing paywalls, DRM, or private-account permissions is
               not supported and may violate platform terms and law.
             </p>
+          </div>
+        </div>
+      </Card>
+
+      <Card id="desktop-behavior-section">
+        <CardHeader
+          title="Desktop Behavior"
+          subtitle="System tray integration, background scheduling, and window controls"
+          icon={AppWindow}
+        />
+        <div className="space-y-4 p-5">
+          <Toggle
+            checked={s.closeToTray !== false}
+            onChange={(v) => set('closeToTray', v)}
+            label="Close button hides to system tray"
+            description="When enabled, clicking the window close button keeps MantiCollect running in the background tray so active downloads and scheduled backups continue uninterrupted."
+          />
+          <Toggle
+            checked={!!s.minimizeToTray}
+            onChange={(v) => set('minimizeToTray', v)}
+            label="Minimize button hides to system tray"
+            description="When enabled, minimizing the window removes it from the taskbar and keeps it accessible from the system tray."
+          />
+          <Toggle
+            checked={!!s.startMinimized}
+            onChange={(v) => set('startMinimized', v)}
+            label="Start application minimized in system tray"
+            description="Launches MantiCollect in the background without displaying the main window on startup."
+          />
+          <Toggle
+            checked={s.notifyOnCloseToTray !== false}
+            onChange={(v) => set('notifyOnCloseToTray', v)}
+            label="Notify when hidden to tray"
+            description="Displays a one-time desktop alert confirming the app is continuing to run in the background when first closed to tray."
+          />
+
+          <div className="flex items-start gap-3 rounded-xl border border-line bg-surface-2/40 p-3.5">
+            <Info className="mt-0.5 shrink-0 text-accent-text" style={{ width: 16, height: 16 }} />
+            <div className="space-y-1 text-xs leading-relaxed text-t3">
+              <p className="font-medium text-t2">Background Scheduling & In-Process Lifecycle</p>
+              <p>
+                In-process background tasks and automated backup schedules execute as long as the MantiCollect process remains alive.
+                Explicitly choosing <strong>Quit MantiCollect</strong> from the system tray menu gracefully halts active work.
+                If the application or system is terminated, any missed schedules will be reconciled on next launch.
+              </p>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Desktop Notifications"
+          subtitle="Native operating system alerts for transfer completions, backup statuses, and updates"
+          icon={Bell}
+        />
+        <div className="space-y-4 p-5">
+          <div className="flex items-center justify-between pb-3 border-b border-line/40">
+            <div>
+              <p className="text-[13px] font-semibold text-t1">Enable Desktop Notifications</p>
+              <p className="text-xs text-t3">Master toggle for all native OS desktop notifications.</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleTestNotification}
+                disabled={testingNotif || s.notificationsEnabled === false}
+              >
+                <BellRing style={{ width: 14, height: 14 }} /> {testingNotif ? 'Sending…' : 'Send Test Notification'}
+              </Button>
+              <label className="relative inline-flex cursor-pointer items-center">
+                <input
+                  type="checkbox"
+                  checked={s.notificationsEnabled !== false}
+                  onChange={(e) => set('notificationsEnabled', e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-surface-3 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent"></div>
+              </label>
+            </div>
+          </div>
+
+          <div className={`space-y-3 transition-opacity ${s.notificationsEnabled === false ? 'opacity-50 pointer-events-none' : ''}`}>
+            <Toggle
+              checked={s.notifyDownloadComplete !== false}
+              onChange={(v) => set('notifyDownloadComplete', v)}
+              label="Download completed"
+              description="Notify when a download completes successfully."
+            />
+            <Toggle
+              checked={s.notifyDownloadFailed !== false}
+              onChange={(v) => set('notifyDownloadFailed', v)}
+              label="Download failed"
+              description="Notify when a download encounters a network, disk, or extraction error."
+            />
+            <Toggle
+              checked={s.notifyBackupComplete !== false}
+              onChange={(v) => set('notifyBackupComplete', v)}
+              label="Cloud backup completed"
+              description="Notify when a scheduled or manual cloud backup run finishes transferring."
+            />
+            <Toggle
+              checked={s.notifyBackupFailed !== false}
+              onChange={(v) => set('notifyBackupFailed', v)}
+              label="Cloud backup failed or partial"
+              description="Notify when a cloud backup fails to connect or fails to upload items."
+            />
+            <Toggle
+              checked={!!s.notifyBackupStarted}
+              onChange={(v) => set('notifyBackupStarted', v)}
+              label="Scheduled backup started"
+              description="Notify when an automated background backup schedule begins running."
+            />
+            <Toggle
+              checked={s.notifyUpdates !== false}
+              onChange={(v) => set('notifyUpdates', v)}
+              label="Application update available"
+              description="Notify when a verified new release is available to install."
+            />
+          </div>
+
+          <div className="flex items-start gap-3 rounded-xl border border-line bg-surface-2/40 p-3.5">
+            <ShieldCheck className="mt-0.5 shrink-0 text-ok" style={{ width: 16, height: 16 }} />
+            <p className="text-xs leading-relaxed text-t3">
+              Notification privacy: Notification payloads are sanitized before reaching the OS. Authentication tokens, private keys, signed query parameters, and sensitive credentials are never displayed or logged in notification alerts.
+            </p>
+          </div>
+        </div>
+      </Card>
+
+      <Card id="application-updates-section">
+        <CardHeader
+          title="Application Updates"
+          subtitle="Signed release channels and secure integrity verification"
+          icon={RefreshCw}
+        />
+        <div className="space-y-4 p-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-xl border border-line bg-surface-2/40 p-4">
+            <div>
+              <div className="flex items-center gap-2.5">
+                <p className="text-[14px] font-semibold text-t1">MantiCollect v{updaterStatus?.currentVersion || '0.1.0'}</p>
+                {updaterStatus?.state === 'unsupported_dev' && (
+                  <Badge variant="secondary">Development Build</Badge>
+                )}
+                {updaterStatus?.state === 'idle' && (
+                  <Badge variant="outline">Idle</Badge>
+                )}
+                {updaterStatus?.state === 'checking' && (
+                  <Badge variant="secondary">Checking…</Badge>
+                )}
+                {updaterStatus?.state === 'available' && (
+                  <Badge variant="default">v{updaterStatus.availableVersion} Available</Badge>
+                )}
+                {updaterStatus?.state === 'downloading' && (
+                  <Badge variant="secondary">Downloading…</Badge>
+                )}
+                {updaterStatus?.state === 'ready' && (
+                  <Badge variant="default">Ready to Install</Badge>
+                )}
+                {updaterStatus?.state === 'up-to-date' && (
+                  <Badge variant="outline">Up to Date</Badge>
+                )}
+                {updaterStatus?.state === 'error' && (
+                  <Badge variant="destructive">Check Failed</Badge>
+                )}
+              </div>
+              <p className="mt-1 text-xs text-t3">
+                {updaterStatus?.message || 'Production releases use cryptographically signed installers and HTTPS feeds.'}
+              </p>
+              {updaterStatus?.lastCheckedAt && (
+                <p className="mt-0.5 text-[11px] text-t3">
+                  Last checked: {new Date(updaterStatus.lastCheckedAt).toLocaleTimeString()}
+                </p>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              {updaterStatus?.state === 'ready' ? (
+                <Button variant="primary" onClick={handleInstallUpdate}>
+                  <RotateCw style={{ width: 14, height: 14 }} /> Restart & Install
+                </Button>
+              ) : (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleCheckUpdate}
+                  disabled={checkingUpdate || updaterStatus?.state === 'checking'}
+                >
+                  <RefreshCw
+                    style={{ width: 14, height: 14 }}
+                    className={checkingUpdate || updaterStatus?.state === 'checking' ? 'animate-spin' : ''}
+                  />
+                  {checkingUpdate || updaterStatus?.state === 'checking' ? 'Checking…' : 'Check for updates'}
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <Toggle
+            checked={s.autoCheckUpdates !== false}
+            onChange={(v) => set('autoCheckUpdates', v)}
+            label="Automatically check for updates on startup"
+            description="Silently query the release endpoint when MantiCollect starts. You will be notified before any update is applied."
+          />
+
+          <div className="flex items-start gap-3 rounded-xl border border-line bg-surface-2/40 p-3.5">
+            <Lock className="mt-0.5 shrink-0 text-accent-text" style={{ width: 16, height: 16 }} />
+            <div className="space-y-1 text-xs leading-relaxed text-t3">
+              <p className="font-medium text-t2">Release Engineering & Integrity Verification</p>
+              <ul className="list-disc pl-4 space-y-0.5">
+                <li>Production auto-updates enforce Authenticode code-signing verification on Windows.</li>
+                <li>Download payloads verify SHA-512 hashes before any installer execution.</li>
+                <li>Arbitrary update URLs and untrusted binaries are strictly prohibited by Electron main process security policies.</li>
+              </ul>
+            </div>
           </div>
         </div>
       </Card>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { motion, useReducedMotion } from 'framer-motion';
 import {
   LayoutDashboard,
@@ -61,6 +61,7 @@ const GROUPS = [
 
 export default function Sidebar() {
   const pathname = usePathname().replace(/\.html$/, '');
+  const router = useRouter();
   const reduce = useReducedMotion();
   const [collapsed, setCollapsed] = useState(() => {
     try {
@@ -70,6 +71,17 @@ export default function Sidebar() {
     }
   });
   const [activeCount, setActiveCount] = useState(0);
+
+  useEffect(() => {
+    return onEvent('navigation:navigate', (payload) => {
+      const targetRoute = typeof payload === 'string' ? payload : payload?.route;
+      if (targetRoute && typeof targetRoute === 'string' && targetRoute.startsWith('/')) {
+        try {
+          router.push(targetRoute);
+        } catch {}
+      }
+    });
+  }, [router]);
 
   useEffect(() => {
     api.jobs
