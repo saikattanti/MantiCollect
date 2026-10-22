@@ -1,0 +1,77 @@
+name: MantiCollect Release Pipeline
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      create_draft_release:
+        description: 'Create draft GitHub release (true/false)'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-package:
+    name: Build & Package Windows Installer
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify branding assets
+        run: node scripts/generate-icons.mjs
+
+      - name: Run automated test suite
+        run: npm test
+
+      - name: Build Next.js static export
+        run: npm run build
+
+      - name: Package Windows NSIS installer
+        env:
+          # Authenticode Code Signing credentials (if configured in repo secrets)
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win --publish never
+
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: MantiCollect-Windows-Setup
+          path: |
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Create Draft GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.create_draft_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $TAG_NAME = if ("${{ github.ref }}".StartsWith("refs/tags/")) { "${{ github.ref }}".Replace("refs/tags/", "") } else { "v0.1.0-manual" }
+          Write-Host "Creating draft release for $TAG_NAME..."
+          gh release create $TAG_NAME release/*.exe release/*.blockmap release/latest.yml `
+            --title "MantiCollect $TAG_NAME" `
+            --draft `
+            --notes "MantiCollect — A Mantitup Product. Production Windows NSIS Installer."
