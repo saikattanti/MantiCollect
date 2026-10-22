@@ -406,7 +406,7 @@ test('Browser extension: manifest.json is valid Manifest V3 with minimal permiss
   assert.equal(manifest.action.default_popup, 'popup.html');
 
   // Verify minimal permissions scope
-  const expectedPerms = ['contextMenus', 'storage', 'notifications', 'activeTab', 'downloads'];
+  const expectedPerms = ['contextMenus', 'storage', 'notifications', 'activeTab', 'downloads', 'nativeMessaging'];
   for (const perm of manifest.permissions) {
     assert.ok(expectedPerms.includes(perm), `Unexpected broad permission: ${perm}`);
   }
@@ -428,13 +428,86 @@ test('Native messaging host: registration scripts and manifests exist', () => {
   const edgeHostManifest = path.join(rootDir, 'native-host', 'com.mantitup.manticollect.edge.json');
   const batScript = path.join(rootDir, 'native-host', 'manticollect_host.bat');
   const jsScript = path.join(rootDir, 'native-host', 'manticollect_host.js');
+  const regPs1 = path.join(rootDir, 'native-host', 'register-host-windows.ps1');
+  const unregPs1 = path.join(rootDir, 'native-host', 'unregister-host-windows.ps1');
 
   assert.ok(fs.existsSync(chromeHostManifest), 'Chrome native host manifest must exist');
   assert.ok(fs.existsSync(edgeHostManifest), 'Edge native host manifest must exist');
   assert.ok(fs.existsSync(batScript), 'Windows host launcher bat must exist');
   assert.ok(fs.existsSync(jsScript), 'Host Node.js script must exist');
+  assert.ok(fs.existsSync(regPs1), 'register-host-windows.ps1 must exist');
+  assert.ok(fs.existsSync(unregPs1), 'unregister-host-windows.ps1 must exist');
 
   const parsedChrome = JSON.parse(fs.readFileSync(chromeHostManifest, 'utf8'));
   assert.equal(parsedChrome.name, 'com.mantitup.manticollect');
   assert.equal(parsedChrome.type, 'stdio');
+  // Disallow wildcards per Chromium security policy
+  for (const origin of parsedChrome.allowed_origins) {
+    assert.ok(!origin.includes('*/*'), `Origin must not use wildcard: ${origin}`);
+    assert.match(origin, /^chrome-extension:\/\/[a-zA-Z0-9_<>-]+\/$/);
+  }
+
+  const parsedEdge = JSON.parse(fs.readFileSync(edgeHostManifest, 'utf8'));
+  assert.equal(parsedEdge.name, 'com.mantitup.manticollect');
+  assert.equal(parsedEdge.type, 'stdio');
+  for (const origin of parsedEdge.allowed_origins) {
+    assert.ok(!origin.includes('*/*'), `Edge origin must not use wildcard: ${origin}`);
+    assert.match(origin, /^extension:\/\/[a-zA-Z0-9_<>-]+\/$/);
+  }
+
+  // Verify launcher bat contains ELECTRON_RUN_AS_NODE fallback for environments without global node
+  const batContent = fs.readFileSync(batScript, 'utf8');
+  assert.ok(batContent.includes('ELECTRON_RUN_AS_NODE=1'), 'Host launcher must support Electron runtime fallback');
 });
+
+test('Loopback bridge: rejects oversized payloads (>64KB)', async () => {
+  const testToken = 'token-payload-size-test';
+  const bridge = createLoopbackBridge({
+    getPort: () => 0,
+    getAuthToken: () => testToken,
+    getQueue: () => ({ listJobs: () => [], startJob: () => '1' }),
+    getWindow: () => null,
+    getSettings: () => ({ allowLocalNetwork: true }),
+    appVersion: '0.1.0'
+  });
+
+  const { port } = await bridge.start();
+
+  try {
+    const hugePayload = JSON.stringify({
+      url: 'https://example.com/video.mp4',
+      title: 'A'.repeat(70 * 1024) // 70 KB > 64 KB limit
+    });
+
+    const res = await new Promise((resolve) => {
+      const req = http.request(
+        {
+          hostname: '127.0.0.1',
+          port,
+          path: '/api/enqueue',
+          method: 'POST',
+          headers: {
+            Host: `127.0.0.1:${port}`,
+            Authorization: `Bearer ${testToken}`,
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(hugePayload)
+          }
+        },
+        (res) => {
+          let b = '';
+          res.on('data', (c) => (b += c));
+          res.on('end', () => resolve({ status: res.statusCode, raw: b }));
+        }
+      );
+      req.on('error', (err) => resolve({ error: err.message }));
+      req.write(hugePayload);
+      req.end();
+    });
+
+    // Should either destroy socket / return error or return 400
+    assert.ok(res.error || res.status >= 400, 'Bridge must reject oversized payloads');
+  } finally {
+    await bridge.stop();
+  }
+});
+

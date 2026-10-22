@@ -92,6 +92,18 @@ async function main() {
   fs.writeFileSync(path.join(assetsDir, 'tray-icon@2x.png'), tray32);
   console.log(`✓ Generated tray icons (16x16, 32x32)`);
 
+  // Browser extension icons (16, 32, 48, 128)
+  const extIconsDir = path.join(root, 'browser-extension', 'icons');
+  fs.mkdirSync(extIconsDir, { recursive: true });
+  for (const s of [16, 32, 48, 128]) {
+    const extBuf = await sharp(sourceIcon)
+      .resize(s, s, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      .png()
+      .toBuffer();
+    fs.writeFileSync(path.join(extIconsDir, `icon-${s}.png`), extBuf);
+  }
+  console.log(`✓ Generated browser extension icons (16, 32, 48, 128)`);
+
   console.log('Branding derivative asset generation complete.');
 }
 

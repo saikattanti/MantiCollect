@@ -46,13 +46,28 @@ async function getStorageConfig() {
   });
 }
 
+function sanitizeUrlForDisplay(rawUrl) {
+  if (!rawUrl) return '';
+  try {
+    const u = new URL(rawUrl);
+    return `${u.protocol}//${u.host}${u.pathname}`;
+  } catch {
+    return String(rawUrl).split(/[?#]/)[0];
+  }
+}
+
 function showNotification(title, message, isError = false) {
   try {
+    // Redact tokens/secrets from messages
+    const sanitized = String(message)
+      .replace(/([?&](?:token|sig|key|signature|auth)=)[^&\s]+/gi, '$1***')
+      .slice(0, 150);
+
     chrome.notifications.create({
       type: 'basic',
       iconUrl: 'icons/icon-48.png',
       title: `MantiCollect: ${title}`,
-      message: message.slice(0, 150),
+      message: sanitized,
       priority: isError ? 2 : 1
     });
   } catch {}
@@ -154,7 +169,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
   if (res.ok) {
     if (res.duplicate) {
-      showNotification('Already Queued', `${res.title || targetUrl} is already in the download queue.`);
+      showNotification('Already Queued', `${res.title || sanitizeUrlForDisplay(targetUrl)} is already in the download queue.`);
       setBadge('!', '#eab308');
     } else {
       showNotification('Download Added', `${res.title || 'Job enqueued'} successfully.`);
@@ -198,7 +213,7 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
       chrome.downloads.cancel(downloadItem.id, () => {
         chrome.downloads.erase({ id: downloadItem.id }, () => {});
       });
-      showNotification('Download Captured', `Transferred to MantiCollect: ${res.title || url}`);
+      showNotification('Download Captured', `Transferred to MantiCollect: ${res.title || sanitizeUrlForDisplay(url)}`);
     }
   } catch {}
 });

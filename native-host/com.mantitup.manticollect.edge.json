@@ -4,6 +4,6 @@
   "path": "manticollect_host.bat",
   "type": "stdio",
   "allowed_origins": [
-    "extension://*/*"
+    "extension://<EXTENSION_ID>/"
   ]
 }

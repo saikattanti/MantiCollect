@@ -4,6 +4,12 @@ set "HOST_DIR=%~dp0"
 set "CHROME_MANIFEST=%HOST_DIR%com.mantitup.manticollect.json"
 set "EDGE_MANIFEST=%HOST_DIR%com.mantitup.manticollect.edge.json"
 
+if not "%~1"=="" (
+  echo Configuring extension origin for ID: %~1
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%HOST_DIR%register-host-windows.ps1" -ExtensionId "%~1"
+  goto :done
+)
+
 echo Registering MantiCollect Native Messaging Host for Google Chrome...
 reg add "HKCU\Software\Google\Chrome\NativeMessagingHosts\com.mantitup.manticollect" /ve /t REG_SZ /d "%CHROME_MANIFEST%" /f
 if %ERRORLEVEL% equ 0 (
@@ -20,5 +26,7 @@ if %ERRORLEVEL% equ 0 (
   echo Edge registration: FAILED
 )
 
+:done
 echo Done.
 endlocal
+
