@@ -621,7 +621,7 @@ export default function SettingsPage() {
       </Card>
 
       <Card>
-        <CardHeader title="Binaries" subtitle="MediaVault drives FFmpeg and yt-dlp as local child processes" icon={Cpu} />
+        <CardHeader title="Binaries" subtitle="MantiCollect drives FFmpeg and yt-dlp as local child processes" icon={Cpu} />
         <div className="space-y-3 p-5">
           <BinStatus label="FFmpeg" info={bins?.ffmpeg} hint="Bundled via ffmpeg-static. Used for merging video+audio and conversions." />
           <BinStatus label="FFprobe" info={bins?.ffprobe} hint="Bundled via ffprobe-static. Used for media inspection." />
@@ -1205,7 +1205,7 @@ export default function SettingsPage() {
       <Card>
         <CardHeader
           title="Authorization"
-          subtitle="Explicit, user-provided credentials only. MediaVault never reads your browser automatically."
+          subtitle="Explicit, user-provided credentials only. MantiCollect never reads your browser automatically."
         />
         <div className="space-y-4 p-5">
           <div>
@@ -1453,7 +1453,7 @@ export default function SettingsPage() {
             checked={!!s.allowLocalNetwork}
             onChange={(v) => set('allowLocalNetwork', v)}
             label="Allow local-network URLs (developer option)"
-            description="By default MediaVault blocks localhost, LAN IPs, and hosts resolving to private addresses (SSRF protection). Enable only for local test servers."
+            description="By default MantiCollect blocks localhost, LAN IPs, and hosts resolving to private addresses (SSRF protection). Enable only for local test servers."
           />
           <div className="flex items-start gap-3 rounded-xl border border-line bg-bg-elev/40 p-3.5">
             <ShieldCheck className="mt-0.5 shrink-0 text-ok" style={{ width: 16, height: 16 }} />

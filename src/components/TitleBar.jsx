@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Download, Link2, X, ClipboardPaste, Settings as SettingsIcon, Loader } from 'lucide-react';
+import { Link2, X, ClipboardPaste, Settings as SettingsIcon, Loader } from 'lucide-react';
 import { api, onEvent } from '../lib/ipc.js';
 
 /**
@@ -44,10 +44,12 @@ export default function TitleBar() {
     <header className="glass z-30 flex h-11 shrink-0 items-center gap-3 rounded-none border-x-0 border-t-0 px-4 select-none drag">
       {/* brand */}
       <div className="no-drag flex items-center gap-2.5">
-        <div className="glossy flex h-[22px] w-[22px] items-center justify-center rounded-md bg-gradient-to-br from-accent to-accent-2 shadow-xs ring-1 ring-white/10">
-          <Download className="text-white" style={{ width: 12, height: 12 }} />
-        </div>
-        <span className="text-[13px] font-semibold tracking-tight text-t1">MediaVault</span>
+        <img
+          src="/MantiCollect-fav-tr.png"
+          alt="MantiCollect"
+          className="h-[22px] w-[22px] object-contain rounded-md"
+        />
+        <span className="text-[13px] font-semibold tracking-tight text-t1">MantiCollect</span>
       </div>
 
       {/* universal quick input - Command Palette ergonomics */}

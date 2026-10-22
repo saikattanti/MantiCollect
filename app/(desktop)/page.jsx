@@ -70,7 +70,7 @@ export default function DashboardPage() {
       <section>
         <p className="overline">Overview</p>
         <h1 className="mt-1 text-[26px] font-semibold leading-tight tracking-tight text-t1">Download anything supported.</h1>
-        <p className="mt-1 text-sm text-t2">Paste a link — MediaVault identifies the source, reads the real formats, and queues the download.</p>
+        <p className="mt-1 text-sm text-t2">Paste a link — MantiCollect identifies the source, reads the real formats, and queues the download.</p>
       </section>
 
       <GlassPanel className="p-4 sm:p-5 shadow-sm">

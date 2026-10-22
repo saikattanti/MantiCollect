@@ -3,8 +3,11 @@ import { ThemeProvider } from '@/lib/theme.jsx';
 import { CSP } from '@/lib/csp.js';
 
 export const metadata = {
-  title: 'MediaVault',
-  description: 'Local-first universal media downloader',
+  title: 'MantiCollect — A Mantitup Product',
+  description: 'Local-first universal media downloader and digital collector for Windows',
+  icons: {
+    icon: '/MantiCollect-fav-tr.png'
+  },
   other: {
     'Content-Security-Policy': CSP
   }

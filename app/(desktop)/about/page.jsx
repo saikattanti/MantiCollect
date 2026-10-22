@@ -12,20 +12,35 @@ export default function AboutPage() {
 
   return (
     <div className="space-y-5">
-      <header>
-        <p className="overline">System</p>
-        <h1 className="mt-1 text-[22px] font-semibold tracking-tight text-t1">About MediaVault</h1>
-        <p className="mt-1 text-sm text-t2">
-          v{info?.version || '0.1.0'} — local-first universal media downloader for Windows
-        </p>
-      </header>
+      {/* Brand Hero */}
+      <div className="glass flex flex-col sm:flex-row items-center gap-6 rounded-2xl border border-line-strong p-6 shadow-sm">
+        <div className="flex h-24 w-48 shrink-0 items-center justify-center p-2">
+          <img
+            src="/MantiCollect-full-logo-tr.png"
+            alt="MantiCollect — A Mantitup Product"
+            className="max-h-24 max-w-full object-contain"
+          />
+        </div>
+        <div className="space-y-1.5 text-center sm:text-left">
+          <p className="overline">Desktop Application</p>
+          <h1 className="text-xl font-bold tracking-tight text-t1">
+            MantiCollect
+          </h1>
+          <p className="text-sm font-medium text-accent">
+            A Mantitup Product
+          </p>
+          <p className="text-xs text-t3">
+            v{info?.version || '0.1.0'} &bull; Local-First Universal Media Downloader &amp; Digital Collector for Windows
+          </p>
+        </div>
+      </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader title="What this app does" />
           <div className="space-y-3 p-5 text-sm leading-relaxed text-t2">
             <p>
-              MediaVault downloads supported media from a wide range of websites using a URL. It identifies the platform through a modular provider
+              MantiCollect downloads supported media from a wide range of websites using a URL. It identifies the platform through a modular provider
               registry, shows the formats the source actually reports, and downloads through a persistent local queue.
             </p>
             <p>
@@ -52,7 +67,7 @@ export default function AboutPage() {
           <div className="p-5 text-sm leading-relaxed text-t2">
             <p>
               Only download media you have the right to save: your own content, publicly available media, or content you are licensed to use. Respect
-              platform terms of service, copyright, and privacy laws. MediaVault does not bypass paywalls, DRM, or private-account permissions, and it
+              platform terms of service, copyright, and privacy laws. MantiCollect does not bypass paywalls, DRM, or private-account permissions, and it
               does not silently use browser cookies — any authentication is explicit and user-provided.
             </p>
           </div>
