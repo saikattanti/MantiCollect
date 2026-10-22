@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -33,11 +33,27 @@ jobs:
           node-version: 22.x
           cache: 'npm'
 
+      - name: Validate version tag against package.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $pkgVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $expectedTag = "v$pkgVersion"
+          $actualTag = "${{ github.ref }}".Replace("refs/tags/", "")
+          if ($actualTag -ne $expectedTag) {
+            Write-Error "Tag mismatch! Git tag '$actualTag' does not match package.json version '$expectedTag'."
+            exit 1
+          }
+          Write-Host "Tag $actualTag matches package.json version $pkgVersion"
+
       - name: Install dependencies
         run: npm ci
 
       - name: Verify branding assets
         run: node scripts/generate-icons.mjs
+
+      - name: Package browser extension
+        run: node scripts/package-extension.mjs
 
       - name: Run automated test suite
         run: npm test
@@ -53,14 +69,42 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --win --publish never
 
-      - name: Upload installer artifacts
+      - name: Verify installer artifact
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path release/MantiCollect-Setup-*.exe -File
+          if (-not $installer) {
+            Write-Error "Expected MantiCollect-Setup-*.exe was not generated in release/!"
+            exit 1
+          }
+          Write-Host "Verified installer: $($installer.FullName) ($($installer.Length) bytes)"
+
+      - name: Generate SHA-256 checksums
+        shell: pwsh
+        run: |
+          $artifacts = Get-ChildItem -Path release/*.exe, release/*.zip -File
+          if ($artifacts.Count -eq 0) {
+            Write-Error "No release artifacts found to checksum!"
+            exit 1
+          }
+          $checksums = foreach ($file in $artifacts) {
+            $hash = Get-FileHash -Path $file.FullName -Algorithm SHA256
+            "$($hash.Hash)  $($file.Name)"
+          }
+          $checksums | Set-Content -Path release/SHA256SUMS.txt -Encoding UTF8
+          Write-Host "Generated SHA256SUMS.txt:"
+          Get-Content release/SHA256SUMS.txt
+
+      - name: Upload installer and extension artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: MantiCollect-Windows-Setup
+          name: MantiCollect-Windows-Package
           path: |
             release/*.exe
+            release/*.zip
             release/*.blockmap
             release/latest.yml
+            release/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
 
@@ -68,10 +112,30 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.create_draft_release == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
         run: |
           $TAG_NAME = if ("${{ github.ref }}".StartsWith("refs/tags/")) { "${{ github.ref }}".Replace("refs/tags/", "") } else { "v0.1.0-manual" }
+          $isSigned = if ("${{ secrets.CSC_LINK }}" -ne "") { "Signed with Authenticode certificate" } else { "Unsigned development build (verify SHA-256 checksum)" }
           Write-Host "Creating draft release for $TAG_NAME..."
-          gh release create $TAG_NAME release/*.exe release/*.blockmap release/latest.yml `
+          
+          $releaseNotes = @"
+          ## MantiCollect $TAG_NAME — A Mantitup Product
+          
+          Local-first universal media downloader and digital collector for Windows.
+          
+          ### Included Artifacts
+          - **MantiCollect-Setup-$($TAG_NAME.TrimStart('v')).exe**: Windows NSIS desktop installer (per-user `%LOCALAPPDATA%\Programs\MantiCollect`).
+          - **manticollect-browser-extension-$TAG_NAME.zip**: Manifest V3 browser extension for Google Chrome and Microsoft Edge.
+          - **SHA256SUMS.txt**: SHA-256 integrity checksums for all release binaries.
+          
+          ### Security & Integrity
+          - **Authenticode Status**: $isSigned
+          - **Verification**: Review SHA256SUMS.txt prior to installation.
+          
+          *Note: This release is created as a draft for maintainer verification. Publication requires explicit maintainer approval.*
+          "@
+          
+          gh release create $TAG_NAME release/*.exe release/*.zip release/*.blockmap release/latest.yml release/SHA256SUMS.txt `
             --title "MantiCollect $TAG_NAME" `
             --draft `
-            --notes "MantiCollect — A Mantitup Product. Production Windows NSIS Installer."
+            --notes $releaseNotes

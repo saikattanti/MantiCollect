@@ -1,7 +1,7 @@
 # Dependencies
 node_modules/
 
-# Production builds
+# Production builds & packages
 dist/
 release/
 vendor/
@@ -10,12 +10,25 @@ vendor/
 .next/
 out/
 
-# Assistant / IDE scratch
-.qwen/
+# Environment & credentials
+.env
+.env.local
+.env.*.local
+*.pfx
+*.p12
+*.key
+*.pem
+credentials.enc
 
-# Runtime / Temp files
+# Runtime & Temp files
 *.log
 *.part
+*.tmp
+*.migration.tmp
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# Assistant / IDE scratch
+.qwen/
 AGENTS.md

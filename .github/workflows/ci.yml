@@ -1,0 +1,50 @@
+name: MantiCollect Continuous Integration
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-and-test:
+    name: Lint, Test & Build Validation
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify branding assets and generate icons
+        run: node scripts/generate-icons.mjs
+
+      - name: Package and validate browser extension
+        run: node scripts/package-extension.mjs
+
+      - name: Execute automated test suite
+        run: npm test
+
+      - name: Build Next.js production export
+        run: npm run build
+
+      - name: Run Electron startup smoke test
+        run: node scripts/smoke.mjs
