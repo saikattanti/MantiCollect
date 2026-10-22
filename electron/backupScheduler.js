@@ -107,7 +107,10 @@ export function createBackupScheduler({
   getDbInstance = getDb,
   getConnectionManager = getStorageConnectionManager,
   getUploadQueueInstance = getUploadQueue,
-  getWindow = () => null
+  getWindow = () => null,
+  onBackupStarted = null,
+  onBackupCompleted = null,
+  onBackupFailed = null
 } = {}) {
   const db = () => getDbInstance();
   const connMgr = () => getConnectionManager();
@@ -440,6 +443,9 @@ export function createBackupScheduler({
     const runStartTime = Date.now();
 
     logger.info('backup-scheduler', `Starting backup run ${runId} for "${sched.name}"`);
+    if (typeof onBackupStarted === 'function') {
+      try { onBackupStarted({ scheduleId, scheduleName: sched.name }); } catch {}
+    }
 
     // 1. Create backup_runs record
     db().prepare(`
@@ -617,6 +623,12 @@ export function createBackupScheduler({
       }
 
       logger.info('backup-scheduler', `Finished backup run ${runId}: ${finalStatus} (${successCount} ok, ${failedCount} fail, ${skippedCount} skip)`);
+      if (finalStatus === 'completed' && typeof onBackupCompleted === 'function') {
+        try { onBackupCompleted({ scheduleId, scheduleName: sched.name, successCount, skippedCount, totalBytesTransferred }); } catch {}
+      } else if ((finalStatus === 'partial' || finalStatus === 'failed') && typeof onBackupFailed === 'function') {
+        try { onBackupFailed({ scheduleId, scheduleName: sched.name, finalStatus, successCount, failedCount, skippedCount, errorSummary: sanitizedErrorSummary }); } catch {}
+      }
+
       sendToWindow('backup:runs:updated', listRuns());
       sendToWindow('backup:schedules:updated', listSchedules());
     }

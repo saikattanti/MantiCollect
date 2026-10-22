@@ -96,7 +96,9 @@ export function createQueue({
   getWindow,
   getSettings = loadSettings,
   getDbInstance = getDb,
-  executeJobFn = executeJob
+  executeJobFn = executeJob,
+  onJobCompleted = null,
+  onJobFailed = null
 } = {}) {
   const db = () => getDbInstance();
   const running = new Map(); // id -> handle
@@ -423,6 +425,12 @@ export function createQueue({
           finished_at: Date.now()
         });
         logger.info('queue', `job ${row.id} completed -> ${res.path}`);
+        if (typeof onJobCompleted === 'function') {
+          try {
+            const completedRow = db().prepare('SELECT * FROM jobs WHERE id = ?').get(row.id);
+            if (completedRow) onJobCompleted(publicJob(completedRow, telemetry));
+          } catch {}
+        }
       })
       .catch((err) => {
         telemetry.finish(row.id);
@@ -442,6 +450,12 @@ export function createQueue({
             finished_at: Date.now()
           });
           logger.error('queue', `job ${row.id} ${cancelled ? 'cancelled' : 'failed'}: ${err?.message || err}`);
+          if (!cancelled && typeof onJobFailed === 'function') {
+            try {
+              const failedRow = db().prepare('SELECT * FROM jobs WHERE id = ?').get(row.id);
+              if (failedRow) onJobFailed(publicJob(failedRow, telemetry), err);
+            } catch {}
+          }
         }
       })
       .finally(() => {

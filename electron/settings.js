@@ -24,7 +24,19 @@ export const DEFAULTS = {
   clipboardDetection: false,
   downloadInterception: false,
   globalUploadLimitKBps: 0,
-  perTaskUploadLimitKBps: 0
+  perTaskUploadLimitKBps: 0,
+  minimizeToTray: false,
+  closeToTray: false,
+  startMinimized: false,
+  notifyOnCloseToTray: true,
+  notificationsEnabled: true,
+  notifyDownloadComplete: true,
+  notifyDownloadFailed: true,
+  notifyBackupComplete: true,
+  notifyBackupFailed: true,
+  notifyBackupStarted: false,
+  notifyUpdates: true,
+  autoCheckUpdates: true
 };
 
 let cache = null;
