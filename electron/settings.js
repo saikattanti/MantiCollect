@@ -3,11 +3,18 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomBytes } from 'node:crypto';
 import electron from 'electron';
+import { migrateUserDataIfNeeded } from './migration.js';
 
 const { app } = typeof electron === 'object' && electron ? electron : { app: null };
 
+function getDefaultDownloadDir() {
+  const legacy = path.join(os.homedir(), 'Downloads', 'MediaVault');
+  if (fs.existsSync(legacy)) return legacy;
+  return path.join(os.homedir(), 'Downloads', 'MantiCollect');
+}
+
 export const DEFAULTS = {
-  downloadDir: path.join(os.homedir(), 'Downloads', 'MediaVault'),
+  downloadDir: getDefaultDownloadDir(),
   concurrency: 2,
   maxFileSizeMB: 0, // 0 = unlimited
   overwrite: 'avoid', // avoid | overwrite
@@ -75,6 +82,11 @@ export function saveSettings(patch) {
 }
 
 export function ensureDirs() {
+  if (app?.getPath) {
+    try {
+      migrateUserDataIfNeeded({ targetDir: app.getPath('userData') });
+    } catch {}
+  }
   const s = loadSettings();
   fs.mkdirSync(s.downloadDir, { recursive: true });
 }

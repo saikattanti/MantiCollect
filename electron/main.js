@@ -21,6 +21,12 @@ import { createNotificationService } from './notifications.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !!process.env.NEXT_DEV_SERVER_URL;
 
+if (app?.setName) {
+  app.setName('MantiCollect');
+} else if (app) {
+  app.name = 'MantiCollect';
+}
+
 // Staged boot diagnostics (works in console-less packaged builds).
 const bootLog = (m) => {
   try {
@@ -107,6 +113,10 @@ if (!gotLock) {
         ? process.argv[shotIdx + 2].replace(/^#?\/?/, '')
         : '';
 
+    const iconIco = path.join(__dirname, 'assets', 'icon.ico');
+    const iconPng = path.join(__dirname, 'assets', 'icon.png');
+    const windowIcon = process.platform === 'win32' && fs.existsSync(iconIco) ? iconIco : iconPng;
+
     mainWindow = new BrowserWindow({
       width: 1360,
       height: 880,
@@ -115,7 +125,8 @@ if (!gotLock) {
       show: false,
       // Solid opaque base color so desktop content never bleeds through.
       backgroundColor: TITLEBAR_THEMES.dark.color,
-      title: 'MediaVault',
+      title: 'MantiCollect — A Mantitup Product',
+      icon: windowIcon,
       titleBarStyle: 'hidden',
       titleBarOverlay: { ...TITLEBAR_THEMES.dark },
       webPreferences: {

@@ -14,7 +14,12 @@ function isUsable(p) {
 
 export function ffmpegBinaryPath(settings = {}) {
   if (settings.ffmpegPath && fs.existsSync(settings.ffmpegPath)) return settings.ffmpegPath;
-  if (isUsable(ffmpegStatic)) return ffmpegStatic;
+  let p = ffmpegStatic;
+  if (p && typeof p === 'string' && app && app.isPackaged) {
+    const unpacked = p.replace('app.asar', 'app.asar.unpacked');
+    if (fs.existsSync(unpacked)) return unpacked;
+  }
+  if (isUsable(p)) return p;
   return null;
 }
 
@@ -24,7 +29,12 @@ export function ffprobeBinaryPath(settings = {}) {
     const candidate = path.join(path.dirname(settings.ffmpegPath), process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe');
     if (fs.existsSync(candidate)) return candidate;
   }
-  if (ffprobeStatic && isUsable(ffprobeStatic.path || ffprobeStatic)) return ffprobeStatic.path || ffprobeStatic;
+  let p = ffprobeStatic && (ffprobeStatic.path || ffprobeStatic);
+  if (p && typeof p === 'string' && app && app.isPackaged) {
+    const unpacked = p.replace('app.asar', 'app.asar.unpacked');
+    if (fs.existsSync(unpacked)) return unpacked;
+  }
+  if (isUsable(p)) return p;
   return null;
 }
 
@@ -40,7 +50,8 @@ export function ytDlpCandidates(settings = {}) {
   const devVendor = path.join(app ? app.getAppPath() : process.cwd(), 'vendor', 'yt-dlp', name);
   const resVendor =
     app && app.isPackaged ? path.join(process.resourcesPath, 'vendor', 'yt-dlp', name) : devVendor;
-  for (const c of [devVendor, resVendor]) if (c && !cands.includes(c)) cands.push(c);
+  const userVendor = app?.getPath ? path.join(app.getPath('userData'), 'vendor', 'yt-dlp', name) : null;
+  for (const c of [devVendor, resVendor, userVendor]) if (c && !cands.includes(c)) cands.push(c);
   return cands;
 }
 
@@ -196,7 +207,7 @@ export async function installYtDlp({ onProgress } = {}) {
 
   onProgress?.({ phase: 'discovering', message: 'Querying GitHub for the latest yt-dlp release' });
   const rel = await fetch('https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest', {
-    headers: { 'user-agent': 'mediavault' }
+    headers: { 'user-agent': 'manticollect' }
   });
   if (!rel.ok) throw new Error(`GitHub API returned HTTP ${rel.status}`);
   const data = await rel.json();
@@ -204,7 +215,7 @@ export async function installYtDlp({ onProgress } = {}) {
   if (!entry) throw new Error('yt-dlp executable not found in the release assets');
 
   onProgress?.({ phase: 'downloading', message: `Downloading ${entry.name}` });
-  const dl = await fetch(entry.browser_download_url, { headers: { 'user-agent': 'mediavault' } });
+  const dl = await fetch(entry.browser_download_url, { headers: { 'user-agent': 'manticollect' } });
   if (!dl.ok || !dl.body) throw new Error(`Download failed (HTTP ${dl.status})`);
 
   const tmp = `${target}.download`;

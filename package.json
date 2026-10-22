@@ -1,13 +1,13 @@
 {
-  "name": "mediavault",
-  "productName": "MediaVault",
+  "name": "manticollect",
+  "productName": "MantiCollect",
   "version": "0.1.0",
-  "description": "Local-first universal media downloader for Windows",
+  "description": "MantiCollect — A Mantitup Product. Local-first universal media downloader and digital collector for Windows.",
   "main": "electron/main.js",
   "type": "module",
   "license": "MIT",
   "private": true,
-  "author": "saika",
+  "author": "Mantitup",
   "engines": {
     "node": ">=20"
   },
@@ -16,14 +16,15 @@
     "dev": "concurrently -k -n RENDERER,MAIN -c cyan,yellow \"next dev -p 3000\" \"wait-on tcp:127.0.0.1:3000 && cross-env NEXT_DEV_SERVER_URL=http://127.0.0.1:3000 electron .\"",
     "build": "next build",
     "start": "npm run build && electron .",
-    "dist": "npm run build && electron-builder --win",
+    "dist": "npm run build && node scripts/clean-release.mjs && electron-builder --win",
+    "generate-icons": "node scripts/generate-icons.mjs",
     "test": "node --test \"test/**/*.test.js\"",
     "smoke": "node scripts/smoke.mjs",
     "setup-bins": "node scripts/setup-bins.mjs"
   },
   "build": {
-    "appId": "local.mediavault.desktop",
-    "productName": "MediaVault",
+    "appId": "com.mantitup.manticollect",
+    "productName": "MantiCollect",
     "directories": {
       "output": "release"
     },
@@ -31,7 +32,12 @@
       "dist/**",
       "electron/**",
       "src/lib/csp.js",
-      "package.json"
+      "public/**",
+      "package.json",
+      "!**/*.test.*",
+      "!**/*.spec.*",
+      "!**/node_modules/*/{CHANGELOG.md,README.md,README,test,tests,example,examples}",
+      "!**/node_modules/.bin"
     ],
     "asarUnpack": [
       "**/*.node",
@@ -51,12 +57,28 @@
       "target": [
         "nsis"
       ],
-      "artifactName": "MediaVault-Setup-${version}.exe"
+      "icon": "electron/assets/icon.ico",
+      "artifactName": "MantiCollect-Setup-${version}.exe"
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    }
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "MantiCollect",
+      "installerIcon": "electron/assets/icon.ico",
+      "uninstallerIcon": "electron/assets/icon.ico",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "saikattanti",
+        "repo": "MantiCollect"
+      }
+    ]
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1154.0",

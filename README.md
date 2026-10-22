@@ -1,8 +1,8 @@
-# MediaVault
+# MantiCollect — A Mantitup Product
 
-**Local-first universal media downloader for Windows.**
+**Local-first universal media downloader and digital collector for Windows.**
 
-Paste a URL. MediaVault identifies the platform, shows the formats the source *actually* reports, and downloads through a persistent local queue. No cloud, no mandatory accounts, no telemetry.
+Paste a URL. MantiCollect identifies the platform, shows the formats the source *actually* reports, and downloads through a persistent local queue. No cloud, no mandatory accounts, no telemetry.
 
 ---
 
@@ -59,16 +59,18 @@ node scripts\integration-check.mjs --download
 
 ### Installed app
 
-`npm run dist` produces `release\MediaVault-Setup-<version>.exe` (NSIS, user-chosen install dir). The packaged app auto-locates vendored yt-dlp from `resources\vendor\` if you place it there, or you can install it in-app at any time (Settings → Binaries).
+`npm run dist` produces `release\MantiCollect-Setup-<version>.exe` (NSIS, customizable per-user install). The packaged app auto-locates vendored yt-dlp from `resources\vendor\` or persistent user data, or you can install it in-app at any time (Settings → Binaries).
 
 ## Where your data lives
 
 | Data            | Location                                    |
 | --------------- | ------------------------------------------- |
-| Settings        | `%APPDATA%\mediavault\settings.json`        |
-| Queue/history   | `%APPDATA%\mediavault\mediavault.db` (SQLite, WAL) |
-| Logs            | `%APPDATA%\mediavault\logs\`                |
-| Downloaded media| `%USERPROFILE%\Downloads\MediaVault\` (change in Settings) |
+| Settings        | `%APPDATA%\MantiCollect\settings.json`        |
+| Queue/history   | `%APPDATA%\MantiCollect\mediavault.db` (SQLite, WAL) |
+| Logs            | `%APPDATA%\MantiCollect\logs\`                |
+| Downloaded media| `%USERPROFILE%\Downloads\MantiCollect\` (customizable in Settings; auto-detects legacy `MediaVault` folder) |
+
+*Note: On first launch, MantiCollect automatically and non-destructively migrates any existing database and settings from legacy `%APPDATA%\MediaVault\` without modifying the original files.*
 
 No telemetry. No network calls except to the sources you paste (and GitHub, only when you explicitly install/update yt-dlp).
 
