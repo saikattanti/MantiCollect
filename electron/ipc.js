@@ -24,6 +24,8 @@ import { isEncryptionAvailable } from './credentials.js';
 import { getStorageConnectionManager as defaultGetStorageConnMgr } from './storageConnections.js';
 import { createUploadQueue } from './uploadQueue.js';
 import { getBackupScheduler as defaultGetBackupScheduler } from './backupScheduler.js';
+import { getUpdateService as defaultGetUpdateService } from './updater.js';
+import { getNotificationService as defaultGetNotificationService } from './notifications.js';
 import { getDb } from './db.js';
 import { logger } from './logger.js';
 
@@ -39,7 +41,10 @@ export function registerIpc({
   getConversionService,
   getStorageConnectionManager,
   getUploadQueue,
-  getBackupScheduler
+  getBackupScheduler,
+  getUpdateService,
+  getNotificationService,
+  onQuit
 }) {
   const settings = () => loadSettings();
   const metadataService = getMetadataService ? getMetadataService() : createMetadataService({ getDbInstance: getDb, getSettings: loadSettings });
@@ -47,6 +52,8 @@ export function registerIpc({
   const storageConnMgr = getStorageConnectionManager ? getStorageConnectionManager() : defaultGetStorageConnMgr();
   const uploadQueue = getUploadQueue ? getUploadQueue() : createUploadQueue({ getDbInstance: getDb, getSettings: loadSettings, getWindow, getConnectionManager: () => storageConnMgr });
   const backupScheduler = getBackupScheduler ? getBackupScheduler() : defaultGetBackupScheduler({ getDbInstance: getDb, getWindow, getConnectionManager: () => storageConnMgr, getUploadQueueInstance: () => uploadQueue });
+  const updateService = getUpdateService ? getUpdateService() : defaultGetUpdateService({ getSettings: loadSettings, getWindow });
+  const notificationService = getNotificationService ? getNotificationService() : defaultGetNotificationService({ getSettings: loadSettings, getWindow });
 
   function handle(channel, fn) {
     ipcMain.handle(channel, async (_event, payload) => {
@@ -356,6 +363,18 @@ export function registerIpc({
       if (!Number.isFinite(n) || n < 0 || n > 10000000) throw new Error('Invalid per-task upload limit');
       next.perTaskUploadLimitKBps = Math.floor(n);
     }
+    if (patch.minimizeToTray !== undefined) next.minimizeToTray = !!patch.minimizeToTray;
+    if (patch.closeToTray !== undefined) next.closeToTray = !!patch.closeToTray;
+    if (patch.startMinimized !== undefined) next.startMinimized = !!patch.startMinimized;
+    if (patch.notifyOnCloseToTray !== undefined) next.notifyOnCloseToTray = !!patch.notifyOnCloseToTray;
+    if (patch.notificationsEnabled !== undefined) next.notificationsEnabled = !!patch.notificationsEnabled;
+    if (patch.notifyDownloadComplete !== undefined) next.notifyDownloadComplete = !!patch.notifyDownloadComplete;
+    if (patch.notifyDownloadFailed !== undefined) next.notifyDownloadFailed = !!patch.notifyDownloadFailed;
+    if (patch.notifyBackupComplete !== undefined) next.notifyBackupComplete = !!patch.notifyBackupComplete;
+    if (patch.notifyBackupFailed !== undefined) next.notifyBackupFailed = !!patch.notifyBackupFailed;
+    if (patch.notifyBackupStarted !== undefined) next.notifyBackupStarted = !!patch.notifyBackupStarted;
+    if (patch.notifyUpdates !== undefined) next.notifyUpdates = !!patch.notifyUpdates;
+    if (patch.autoCheckUpdates !== undefined) next.autoCheckUpdates = !!patch.autoCheckUpdates;
     return saveSettings(next);
   });
 
@@ -901,6 +920,40 @@ export function registerIpc({
     return backupScheduler.getRunDetails(id);
   });
 
+  /* ---------------- Phase 10: Lifecycle, Updater & Notifications ---------------- */
+
+  handle('app:quit', async () => {
+    if (typeof onQuit === 'function') {
+      onQuit();
+    } else {
+      app.quit();
+    }
+    return { ok: true };
+  });
+
+  handle('updater:status', async () => {
+    return updateService.getStatus();
+  });
+
+  handle('updater:check', async (p) => {
+    return updateService.checkForUpdates(Boolean(p?.manual));
+  });
+
+  handle('updater:install', async () => {
+    updateService.quitAndInstall();
+    return { ok: true };
+  });
+
+  handle('notifications:test', async (p) => {
+    const shown = notificationService.showNotification({
+      type: 'custom',
+      title: typeof p?.title === 'string' ? p.title : 'MantiCollect Notifications',
+      body: typeof p?.body === 'string' ? p.body : 'Desktop notifications are active and verified.',
+      route: '/settings'
+    });
+    return { ok: true, shown };
+  });
+
   // Emitted event references for conversion telemetry
   function emitConversionEvents(data) {
     sendToWindow('conversion:progress', data);
@@ -917,6 +970,12 @@ export function registerIpc({
   function emitBackupEvents(data) {
     sendToWindow('backup:schedules:updated', data);
     sendToWindow('backup:runs:updated', data);
+  }
+
+  // Emitted event references for updater & navigation events
+  function emitLifecycleEvents(data) {
+    sendToWindow('updater:status', data);
+    sendToWindow('navigation:navigate', data);
   }
 
   /* ---------------- queue & scheduler recovery on startup ---------------- */

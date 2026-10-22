@@ -4,13 +4,19 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, session, shell, ipcMain, protocol } from 'electron';
 import { logger } from './logger.js';
-import { initDb, closeDb } from './db.js';
+import { initDb, closeDb, getDb } from './db.js';
 import { ensureDirs, loadSettings } from './settings.js';
 import { createQueue } from './queue.js';
 import { registerIpc } from './ipc.js';
 import { createLoopbackBridge } from './bridge/loopbackServer.js';
 import { createClipboardDetector } from './clipboard.js';
 import { DEV_CSP, PROD_CSP } from '../src/lib/csp.js';
+import { getStorageConnectionManager } from './storageConnections.js';
+import { createUploadQueue } from './uploadQueue.js';
+import { createBackupScheduler } from './backupScheduler.js';
+import { createTrayManager } from './tray.js';
+import { createUpdateService } from './updater.js';
+import { createNotificationService } from './notifications.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = !!process.env.NEXT_DEV_SERVER_URL;
@@ -27,6 +33,15 @@ let mainWindow = null;
 let queue = null;
 let bridgeServer = null;
 let clipboardDetector = null;
+let trayManager = null;
+let updateService = null;
+let notificationService = null;
+let backupScheduler = null;
+let uploadQueue = null;
+let isQuitting = false;
+app.isQuitting = false;
+let hasNotifiedCloseToTray = false;
+let shutdownDone = false;
 
 // Privileged app scheme: the static Next.js export is served from
 // mvault://app/ so asset URLs have a real origin (file:// would break
@@ -54,6 +69,7 @@ if (!gotLock) {
 } else {
   app.on('second-instance', () => {
     if (mainWindow) {
+      if (!mainWindow.isVisible()) mainWindow.show();
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
     }
@@ -157,7 +173,40 @@ if (!gotLock) {
       mainWindow.loadURL(shotRoute ? `${APP_SCHEME}://app/${shotRoute}` : `${APP_SCHEME}://app/`);
     }
 
-    mainWindow.once('ready-to-show', () => mainWindow.show());
+    mainWindow.once('ready-to-show', () => {
+      const s = loadSettings();
+      const isHeadless = smokeIdx !== -1 || shotIdx !== -1;
+      if (!s.startMinimized || isHeadless) {
+        mainWindow.show();
+      }
+    });
+
+    mainWindow.on('minimize', (e) => {
+      const s = loadSettings();
+      if (s.minimizeToTray) {
+        e.preventDefault();
+        mainWindow.hide();
+      }
+    });
+
+    mainWindow.on('close', (e) => {
+      if (isQuitting || app.isQuitting) return;
+      const s = loadSettings();
+      if (s.closeToTray) {
+        e.preventDefault();
+        mainWindow.hide();
+        if (s.notifyOnCloseToTray && !hasNotifiedCloseToTray) {
+          hasNotifiedCloseToTray = true;
+          notificationService?.showNotification({
+            type: 'custom',
+            title: 'MantiCollect',
+            body: 'MantiCollect is running in the system tray. Background tasks and schedules will continue.',
+            route: '/'
+          });
+        }
+      }
+    });
+
     mainWindow.on('closed', () => {
       mainWindow = null;
     });
@@ -187,6 +236,15 @@ if (!gotLock) {
                     document.documentElement.classList.remove('dark');
                     document.documentElement.setAttribute('data-theme', 'light');
                     localStorage.setItem('mv-theme', 'light');
+                  })()`
+                );
+                await new Promise((r) => setTimeout(r, 300));
+              } else if (process.env.TEST_THEME === 'dark') {
+                await wc.executeJavaScript(
+                  `(() => {
+                    document.documentElement.classList.add('dark');
+                    document.documentElement.setAttribute('data-theme', 'dark');
+                    localStorage.setItem('mv-theme', 'dark');
                   })()`
                 );
                 await new Promise((r) => setTimeout(r, 300));
@@ -346,7 +404,80 @@ if (!gotLock) {
       bootLog('dirs ensured');
       initDb();
       bootLog('db initialized');
-      queue = createQueue({ getWindow: () => mainWindow });
+
+      notificationService = createNotificationService({
+        getSettings: loadSettings,
+        getWindow: () => mainWindow,
+        iconPath: path.join(__dirname, 'assets', 'icon.png')
+      });
+      bootLog('notification service created');
+
+      updateService = createUpdateService({
+        getSettings: loadSettings,
+        getWindow: () => mainWindow,
+        onNotification: (notif) => {
+          notificationService?.notifyUpdateAvailable({ version: notif?.version });
+        }
+      });
+      bootLog('updater service created');
+
+      const storageConnMgr = getStorageConnectionManager();
+      uploadQueue = createUploadQueue({
+        getDbInstance: getDb,
+        getSettings: loadSettings,
+        getWindow: () => mainWindow,
+        getConnectionManager: () => storageConnMgr
+      });
+      bootLog('upload queue created');
+
+      backupScheduler = createBackupScheduler({
+        getDbInstance: getDb,
+        getWindow: () => mainWindow,
+        getConnectionManager: () => storageConnMgr,
+        getUploadQueueInstance: () => uploadQueue,
+        onBackupStarted: (schedule, run) => {
+          notificationService?.notifyBackupStarted({
+            scheduleName: schedule?.name,
+            runId: run?.id
+          });
+        },
+        onBackupCompleted: (schedule, run) => {
+          notificationService?.notifyBackupCompleted({
+            scheduleName: schedule?.name,
+            runId: run?.id,
+            itemsCompleted: run?.items_completed,
+            bytesTransferred: run?.bytes_transferred
+          });
+        },
+        onBackupFailed: (schedule, run, err) => {
+          notificationService?.notifyBackupFailed({
+            scheduleName: schedule?.name,
+            runId: run?.id,
+            error: err?.message || err
+          });
+        }
+      });
+      bootLog('backup scheduler created');
+
+      queue = createQueue({
+        getWindow: () => mainWindow,
+        onJobCompleted: (job) => {
+          notificationService?.notifyDownloadComplete({
+            id: job?.id,
+            title: job?.title || job?.metadata?.title || 'Download',
+            targetPath: job?.targetPath
+          });
+          trayManager?.updateMenu();
+        },
+        onJobFailed: (job, err) => {
+          notificationService?.notifyDownloadFailed({
+            id: job?.id,
+            title: job?.title || job?.metadata?.title || 'Download',
+            error: err?.message || err
+          });
+          trayManager?.updateMenu();
+        }
+      });
       bootLog('queue created');
 
       clipboardDetector = createClipboardDetector({
@@ -369,15 +500,32 @@ if (!gotLock) {
       });
       bootLog('bridge server started');
 
+      trayManager = createTrayManager({
+        getWindow: () => mainWindow,
+        getQueue: () => queue,
+        getUpdateService: () => updateService,
+        onQuit: handleExplicitQuit,
+        iconPath: path.join(__dirname, 'assets', 'tray-icon.png')
+      });
+      trayManager.init();
+      bootLog('tray manager initialized');
+
       registerIpc({
         getQueue: () => queue,
         getWindow: () => mainWindow,
-        getClipboardDetector: () => clipboardDetector
+        getClipboardDetector: () => clipboardDetector,
+        getStorageConnectionManager: () => storageConnMgr,
+        getUploadQueue: () => uploadQueue,
+        getBackupScheduler: () => backupScheduler,
+        getUpdateService: () => updateService,
+        getNotificationService: () => notificationService,
+        onQuit: handleExplicitQuit
       });
       bootLog('ipc registered');
+
       createWindow();
       bootLog('window created');
-      logger.info('main', `MediaVault started (dev=${isDev})`);
+      logger.info('main', `MantiCollect started (dev=${isDev})`);
     } catch (err) {
       logger.error('main', `startup failed: ${err?.stack || err}`);
       app.exit(1);
@@ -388,13 +536,86 @@ if (!gotLock) {
     });
   });
 
-  app.on('window-all-closed', () => {
+  function performGracefulShutdown() {
+    if (shutdownDone) return;
+    shutdownDone = true;
     try {
-      if (clipboardDetector) clipboardDetector.stop();
-      if (bridgeServer) bridgeServer.stop();
-      if (queue) queue.shutdown();
-    } catch {}
-    closeDb();
+      if (trayManager) {
+        trayManager.destroy();
+        trayManager = null;
+      }
+    } catch (e) {
+      logger.warn('main', `Tray destroy error: ${e?.message}`);
+    }
+    try {
+      if (backupScheduler) {
+        backupScheduler.shutdown();
+        backupScheduler = null;
+      }
+    } catch (e) {
+      logger.warn('main', `Backup scheduler shutdown error: ${e?.message}`);
+    }
+    try {
+      if (uploadQueue) {
+        uploadQueue.shutdown();
+        uploadQueue = null;
+      }
+    } catch (e) {
+      logger.warn('main', `Upload queue shutdown error: ${e?.message}`);
+    }
+    try {
+      if (clipboardDetector) {
+        clipboardDetector.stop();
+        clipboardDetector = null;
+      }
+    } catch (e) {
+      logger.warn('main', `Clipboard detector stop error: ${e?.message}`);
+    }
+    try {
+      if (bridgeServer) {
+        bridgeServer.stop();
+        bridgeServer = null;
+      }
+    } catch (e) {
+      logger.warn('main', `Bridge stop error: ${e?.message}`);
+    }
+    try {
+      if (queue) {
+        queue.shutdown();
+        queue = null;
+      }
+    } catch (e) {
+      logger.warn('main', `Queue shutdown error: ${e?.message}`);
+    }
+    try {
+      closeDb();
+    } catch (e) {
+      logger.warn('main', `DB close error: ${e?.message}`);
+    }
+  }
+
+  function handleExplicitQuit() {
+    isQuitting = true;
+    app.isQuitting = true;
+    performGracefulShutdown();
+    app.quit();
+  }
+
+  app.on('before-quit', () => {
+    isQuitting = true;
+    app.isQuitting = true;
+  });
+
+  app.on('will-quit', () => {
+    performGracefulShutdown();
+  });
+
+  app.on('window-all-closed', () => {
+    const s = loadSettings();
+    if (s.closeToTray && !isQuitting && !app.isQuitting) {
+      return;
+    }
+    performGracefulShutdown();
     app.quit();
   });
 }

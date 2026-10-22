@@ -75,7 +75,12 @@ const INVOKE_CHANNELS = new Set([
   'backup:schedule:toggle',
   'backup:schedule:run-now',
   'backup:run:list',
-  'backup:run:get'
+  'backup:run:get',
+  'app:quit',
+  'updater:status',
+  'updater:check',
+  'updater:install',
+  'notifications:test'
 ]);
 
 const EVENT_CHANNELS = new Set([
@@ -90,7 +95,9 @@ const EVENT_CHANNELS = new Set([
   'upload:progress',
   'upload:updated',
   'backup:schedules:updated',
-  'backup:runs:updated'
+  'backup:runs:updated',
+  'updater:status',
+  'navigation:navigate'
 ]);
 
 contextBridge.exposeInMainWorld('mv', {

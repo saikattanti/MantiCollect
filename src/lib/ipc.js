@@ -80,6 +80,36 @@ const mv = () => {
           ]
         };
       }
+      if (channel === 'updater:status') {
+        return {
+          ok: true,
+          result: {
+            state: 'unsupported_dev',
+            message: 'Development build — automatic updates are disabled in unpacked development mode.',
+            currentVersion: '0.1.0',
+            availableVersion: null,
+            downloadProgress: null,
+            lastCheckedAt: Date.now(),
+            isPackaged: false
+          }
+        };
+      }
+      if (channel === 'updater:check') {
+        return {
+          ok: true,
+          result: {
+            state: 'unsupported_dev',
+            message: 'Development build — production auto-updates require an installed, signed package.',
+            currentVersion: '0.1.0'
+          }
+        };
+      }
+      if (channel === 'notifications:test') {
+        return { ok: true, result: { ok: true, shown: true } };
+      }
+      if (channel === 'app:quit') {
+        return { ok: true, result: { ok: true } };
+      }
       return { ok: true, result: [] };
     },
     on: () => () => {}
@@ -208,5 +238,16 @@ export const api = {
   clipboard: {
     getDetected: () => invoke('clipboard:get-detected'),
     clear: () => invoke('clipboard:clear')
+  },
+  app: {
+    quit: () => invoke('app:quit')
+  },
+  updater: {
+    status: () => invoke('updater:status'),
+    check: (manual = true) => invoke('updater:check', { manual }),
+    install: () => invoke('updater:install')
+  },
+  notifications: {
+    test: (p) => invoke('notifications:test', p || {})
   }
 };
