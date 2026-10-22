@@ -1,197 +1,178 @@
-# MantiCollect — A Mantitup Product
+<div align="center">
+  <img src="public/MantiCollect-name-logo-tr.png" alt="MantiCollect Logo" width="360" />
+  <p><strong>A Mantitup Product • Local-First Universal Media Downloader and Digital Collector</strong></p>
+  <p>
+    <a href="#features">Features</a> •
+    <a href="#installation">Installation</a> •
+    <a href="#browser-extension">Browser Extension</a> •
+    <a href="#quick-start">Quick Start</a> •
+    <a href="#architecture">Architecture</a> •
+    <a href="#security--privacy">Security & Privacy</a> •
+    <a href="#roadmap">Roadmap</a> •
+    <a href="#license">License</a>
+  </p>
+</div>
 
-**Local-first universal media downloader and digital collector for Windows.**
+---
 
-Paste a URL. MantiCollect identifies the platform, shows the formats the source *actually* reports, and downloads through a persistent local queue. No cloud, no mandatory accounts, no telemetry.
+## Overview
+
+**MantiCollect** is an offline-first, privacy-focused desktop application for Windows that combines multi-connection accelerated downloading, multi-platform media extraction, media library organization, format conversion, and automated cloud backups into a unified desktop tool.
+
+Paste a URL or initiate a transfer directly from your browser. MantiCollect validates the source, probes actual available streams, and executes transfers through an atomic, SQLite-backed download queue with pause/resume, segmented acceleration, and bandwidth throttling.
 
 ---
 
 ## Features
 
-- **Universal URL input** — direct media files (JPG, MP4, MP3, …) and any platform URL
-- **16 registered platform providers** + generic yt-dlp fallback (probe decides what a site actually supports)
-- **Real format lists** — resolutions, codecs, bitrates, and sizes come straight from the source; nothing is fabricated
-- **Persistent download queue** — SQLite-backed, configurable concurrency, survives restarts, interrupted jobs auto-resume
-- **Batch downloads** — multi-URL paste, .txt import, validation, dedupe, per-item progress, CSV report
-- **Collections & playlists** — item listing, individual selection, select-all, one failure never kills the rest
-- **Local library** — live scan of your download folder, grid/list views, search, ZIP export, safe delete
-- **FFmpeg post-processing** — audio extraction/conversion (clearly labeled as re-encode), stream merging
-- **Honest capability matrix** — in-app Supported Platforms page generated from the live provider registry
-- **Secure by default** — SSRF protection, path confinement, no shell interpolation, TLS never disabled
+* **Universal URL Input**: Ingests direct media URLs (`.mp4`, `.mkv`, `.mp3`, `.flac`, `.zip`, `.iso`, etc.) and streaming platform links.
+* **Multi-Connection Segmented Downloads**: Concurrent HTTP range downloads (`206 Partial Content`) with dynamic segment allocation, integrity verification, and automatic fallback for servers without range support.
+* **Streaming Media Extraction (yt-dlp)**: Bundled standalone `yt-dlp` executable with live progress streaming, resolution selection, audio-only extraction, and subtitles.
+* **16 Registered Platform Adapters**: Dedicated adapters for YouTube, Instagram, Facebook, TikTok, X (Twitter), Reddit, Vimeo, Dailymotion, Pinterest, SoundCloud, Twitch, Bandcamp, Flickr, Tumblr, Threads, and LinkedIn, plus generic fallback.
+* **Local Media Library & Collections**: Live directory scanning, playlist/collection management, tag organization, batch selection, ZIP export, and safe file removal.
+* **FFmpeg Conversion Pipeline**: Bundled `ffmpeg-static` and `ffprobe-static` for transcoding, stream merging, re-encoding, and audio extraction across MP4, MKV, MP3, AAC, FLAC, and WebM.
+* **Cloud Storage & Automated Backups**:
+  * Direct synchronization with **Amazon S3 / S3-Compatible** (AWS, Cloudflare R2, MinIO, Backblaze B2) using streaming and managed multipart uploads.
+  * **WebDAV** chunked transfer support.
+  * **SFTP / SSH** file transfer with strict host-key fingerprint verification (MITM protection).
+  * Cron-based background backup scheduler executing automatically even while minimized to tray.
+* **System Tray & Desktop Integration**: Minimize-to-tray, close-to-tray, native Windows notifications, and background queue monitoring.
+* **Manifest V3 Browser Extension**: One-click download handoff from Google Chrome and Microsoft Edge via Chromium Native Messaging Host or authenticated loopback bridge.
+* **Strict Privacy & Security**: Zero telemetry, zero analytics tracking, local SQLite persistence (`WAL` mode), AES-256-GCM credential encryption, and SSRF loopback protections.
 
-## Requirements
+---
 
-- Windows 10/11 (x64)
-- For development: Node.js 20+ (built and tested on Node 24)
-- Internet access (only for downloading media)
+## Installation
 
-FFmpeg, FFprobe, and yt-dlp are provided for you:
+### Windows Installer (Recommended)
+1. Download `MantiCollect-Setup-<version>.exe` from the [GitHub Releases](https://github.com/saikattanti/MantiCollect/releases) page.
+2. Run the installer:
+   * Installs per-user to `%LOCALAPPDATA%\Programs\MantiCollect\`.
+   * Requires **no Administrator privileges** (no UAC prompt).
+   * Creates Start Menu and Desktop shortcuts.
+3. On first launch, MantiCollect automatically initializes or non-destructively migrates existing databases.
 
-| Binary  | Source                                        | License            |
-| ------- | --------------------------------------------- | ------------------ |
-| FFmpeg  | `ffmpeg-static` npm package (auto on install) | GPL                |
-| FFprobe | `ffprobe-static` npm package (auto on install)| GPL/LGPL           |
-| yt-dlp  | Official standalone exe (one-time download)   | MIT                |
+*For complete installation details and data preservation policies, see the [Distribution & Installation Guide](docs/DISTRIBUTION_AND_INSTALLATION.md).*
 
-## Quick start
+---
 
-```bat
-:: 1. Install dependencies (downloads FFmpeg/FFprobe binaries too)
+## Browser Extension
+
+MantiCollect includes an optional Manifest V3 browser extension for Google Chrome and Microsoft Edge.
+
+1. Locate the unpacked extension in `release/browser-extension-unpacked` or unpack `manticollect-browser-extension-v<version>.zip`.
+2. In Chrome or Edge, navigate to `chrome://extensions` or `edge://extensions`.
+3. Enable **Developer mode** and click **Load unpacked**.
+4. Select the `browser-extension-unpacked` folder.
+5. In the `native-host` folder, register the Native Messaging Host:
+   ```powershell
+   cd native-host
+   .\register-host-windows.ps1 -ExtensionId <YOUR_EXTENSION_ID>
+   ```
+
+*Note: Browser download interception is strictly opt-in and disabled by default. If enabled, browser downloads are only transferred when MantiCollect acknowledges acceptance.*
+
+---
+
+## Quick Start (Developer Setup)
+
+### Prerequisites
+* Windows 10/11 x64
+* Node.js `20.x` or `22.x` (LTS)
+* npm `10.x` or higher
+
+### Setup Commands
+```bash
+# 1. Clone repository
+git clone https://github.com/saikattanti/MantiCollect.git
+cd MantiCollect
+
+# 2. Install dependencies (configures native modules and static binaries)
 npm install
 
-:: 2. Install yt-dlp into vendor\yt-dlp (or: Settings -> Binaries -> Install in the app)
+# 3. Download/verify yt-dlp vendor binary
 npm run setup-bins
 
-:: 3. Run in development mode (Next.js dev server + Electron with hot reload)
+# 4. Run development environment (Next.js hot reload + Electron)
 npm run dev
 ```
 
-Other commands:
-
-```bat
-npm test                     :: run the automated test suite (39 tests)
-npm run smoke                :: build if needed, boot the app, verify the window loads
-npm start                    :: production-mode run (builds renderer, launches Electron)
-npm run dist                 :: build the Windows NSIS installer into release\
-node scripts\integration-check.mjs --download
-                             :: real-network end-to-end check (probe + small download)
+### Other Supported Commands
+```bash
+npm test                 # Run all 215+ automated unit and integration tests
+npm run build            # Build Next.js static production export (dist/)
+npm run smoke            # Headless Electron boot and window verification test
+npm run package:extension# Validate and package Manifest V3 browser extension
+npm run dist             # Build Windows NSIS production installer (release/)
 ```
 
-### Installed app
+---
 
-`npm run dist` produces `release\MantiCollect-Setup-<version>.exe` (NSIS, customizable per-user install). The packaged app auto-locates vendored yt-dlp from `resources\vendor\` or persistent user data, or you can install it in-app at any time (Settings → Binaries).
+## Where Your Data Lives
 
-## Where your data lives
+MantiCollect stores all user data locally on your system:
 
-| Data            | Location                                    |
-| --------------- | ------------------------------------------- |
-| Settings        | `%APPDATA%\MantiCollect\settings.json`        |
-| Queue/history   | `%APPDATA%\MantiCollect\mediavault.db` (SQLite, WAL) |
-| Logs            | `%APPDATA%\MantiCollect\logs\`                |
-| Downloaded media| `%USERPROFILE%\Downloads\MantiCollect\` (customizable in Settings; auto-detects legacy `MediaVault` folder) |
+| Data Type | Storage Location | Notes |
+| :--- | :--- | :--- |
+| **Database & Queue** | `%APPDATA%\MantiCollect\mediavault.db` | SQLite with Write-Ahead Logging (`WAL`) |
+| **Settings** | `%APPDATA%\MantiCollect\settings.json` | JSON configuration |
+| **Credentials** | `%APPDATA%\MantiCollect\credentials.enc` | AES-256-GCM encrypted cloud secrets |
+| **Logs** | `%APPDATA%\MantiCollect\logs\` | Local application event logs |
+| **Downloaded Files** | `%USERPROFILE%\Downloads\MantiCollect\` | User-configurable download directory |
 
-*Note: On first launch, MantiCollect automatically and non-destructively migrates any existing database and settings from legacy `%APPDATA%\MediaVault\` without modifying the original files.*
+---
 
-No telemetry. No network calls except to the sources you paste (and GitHub, only when you explicitly install/update yt-dlp).
+## Security & Privacy
 
-## Architecture
+* **Defense in Depth**: Electron `contextIsolation: true`, `nodeIntegration: false`, and `sandbox: true` are enforced across all windows.
+* **Preload Bridge**: Whitelist-only IPC surface via `contextBridge` (`electron/preload.cjs`). Raw Node built-ins are never exposed to renderer code.
+* **Untrusted Input Sanitation**: URLs pass rigorous validation (`validateBrowserSubmission`), blocking `javascript:`, `data:`, `file:`, and credentials in URLs (`user:pass@host`).
+* **SSRF Guard**: Loopback and RFC 1918 private network ranges are blocked by default (`assertPublicUrl`).
+* **Safe Subprocesses**: `yt-dlp` and `ffmpeg` are spawned directly with discrete argument arrays; shell interpolation (`shell: true`) is strictly forbidden.
+* **Encrypted Secrets**: Cloud storage passwords and keys are encrypted at rest with AES-256-GCM using machine-derived keys.
+* **Local-First**: No tracking, analytics, or external telemetry of user URLs, downloads, or browsing history.
 
-```
-electron/               main process (Node)
-  main.js               app lifecycle, window, mvault:// protocol, security hardening
-  preload.cjs           contextBridge surface — whitelisted channels only
-  ipc.js                restricted IPC handlers, per-payload validation
-  security.js           URL/SSRF guards, filename sanitize, path confinement
-  db.js                 SQLite schema + migration
-  settings.js           local settings store
-  bins.js               ffmpeg/ffprobe/yt-dlp resolution, spawning, installer
-  queue.js              persistent job queue (concurrency, resume, throttled UI)
-  runner.js             job execution orchestration
-  library.js            folder scan, thumbnails, ZIP export, safe delete
-  providers/
-    registry.js         URL -> provider resolution, capability matrix
-    direct.js           direct media-file downloads (streaming, redirect re-validation)
-    platforms.js        declarative platform specs + honest capabilities
-    ytdlp.js            yt-dlp subprocess provider + generic fallback
-app/                    Next.js App Router renderer (static export)
-  layout.jsx            root layout (server) — global CSS, CSP metadata, ThemeProvider
-  (desktop)/layout.jsx  desktop shell: title bar, sidebar, page transitions, toasts
-  (desktop)/*           13 route pages (dashboard, universal, video, audio, image,
-                        social, collections, batch, queue, history, library,
-                        platforms, settings, about)
-src/                    shared renderer code (components, lib: ipc bridge, theme,
-                        tokens, format helpers)
-scripts/                setup-bins, smoke, integration-check
-test/                   node:test suite (39 tests, no mocks of core paths)
-vendor/yt-dlp/          downloaded yt-dlp executable (gitignored)
-```
+*To report security issues, refer to [SECURITY.md](SECURITY.md).*
 
-**Provider-adapter design:** each provider implements only the operations it actually supports (`canHandleUrl`, `getCapabilities`, `getMetadata`, `startDownload`). Methods for unimplemented features return explicit unsupported results. The generic provider tries yt-dlp's full extractor list and reports what the probe actually finds — unsupported sites say so, they are not hidden.
+---
 
-**Renderer integration:** the renderer is **Next.js (App Router) with a static export** — no server component features are used (all data comes from the main process over IPC), so the build produces plain HTML/JS/CSS in `dist/`. Electron serves that export from a privileged custom scheme (`mvault://app/`), which gives asset URLs a real origin (a `file://` load would break Next's root-absolute `/_next` paths and leaves an opaque CSP origin) and keeps client-side route transitions working through the same handler.
+## Supported Platforms & Known Limitations
 
-## Platform support
+The in-app **Supported Platforms** view reflects the live provider capabilities:
+* **YouTube**: Video, audio extraction, format selection, playlists, and channel probes verified end-to-end.
+* **Direct Downloads**: Multi-connection segmented downloads verified with full range support and pause/resume.
+* **Social / Video Platforms**: Extractor support via yt-dlp. Platforms with aggressive rate limits (e.g. X/Twitter) or login requirements may require exported `cookies.txt` from your own account.
+* **Operating System**: Windows 10/11 x64 is the primary tested and supported desktop platform. macOS and Linux builds are not yet officially validated.
+* **Code Signing**: Release binaries generated from open-source builds are unsigned (`NotSigned`) until an official Authenticode certificate is provisioned by the maintainer.
 
-The in-app **Supported Platforms** page is generated from the live provider registry. Status values:
+---
 
-- **Supported** — works for public content
-- **Partial** — works in some cases (notes explain which)
-- **Auth required** — only with an explicit, user-provided `cookies.txt` from your own account
-- **Not supported**
+## Roadmap
 
-Registered providers: YouTube, Instagram, Facebook, TikTok, X, Reddit, Vimeo, Dailymotion, Pinterest, SoundCloud, Twitch, Bandcamp, Flickr, Tumblr, Threads, LinkedIn, Direct file, Generic (yt-dlp).
+* [ ] Automated Authenticode code signing with trusted hardware security module (HSM) support.
+* [ ] Accessibility audit: full keyboard tab navigation, ARIA landmarks, and high-contrast support.
+* [ ] Chrome Web Store and Microsoft Edge Add-ons store submission.
+* [ ] Multi-platform engine evaluation (macOS Apple Silicon & Linux AppImage).
+* [ ] Cloud backup retry queue with automatic network reconnect resumption.
 
-**Honesty note:** the YouTube single-item path (probe + video download with FFmpeg merge) has been verified end-to-end against a real public video (2026-10-19). The other platform providers share the same verified yt-dlp code path, but each site's extractor can fail independently (e.g. X rate limits) — the registry marks each one `untested` until it has actually been exercised. `node scripts\integration-check.mjs <url>` exists to verify any platform on demand.
+---
 
-## Authorization & legal use
+## Contributing
 
-- Only download media you have the right to save: your own content, public media, or licensed content.
-- MediaVault **never** silently reads browser cookies. If a feature genuinely requires an account (e.g. profile-wide collections on Instagram/X), you export a `cookies.txt` from your own logged-in browser session and point Settings at it. The file path is stored locally; cookie contents are never logged.
-- No paywall or DRM bypass. No private-account access. No private messages.
-- Respect platform terms and local law.
+Contributions from the community are welcome! Please review our:
+* [Contributing Guide](CONTRIBUTING.md)
+* [Code of Conduct](CODE_OF_CONDUCT.md)
+* [Architecture Documentation](docs/ARCHITECTURE.md)
+* [Release Checklist](docs/RELEASE_CHECKLIST.md)
 
-## Security model
-
-- `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`
-- Preload exposes a **whitelisted** invoke/event channel set; unknown channels are rejected
-- Every IPC payload is validated in the main process before use
-- Content-Security-Policy applied twice: a `<meta>` tag baked into the exported HTML (single source of truth in `src/lib/csp.js`) and a header injection where the protocol supports it. `script-src` includes `'unsafe-inline'` because Next.js static exports embed two inline bootstrap scripts whose content changes per build; all external scripts remain restricted to the app's own origin
-- Navigation locked to the app; `window.open` denied (https links go to the system browser)
-- All permission requests (camera, geo, notifications) denied
-- **SSRF protection:** only http(s); private/loopback IP literals, local hostnames, and DNS results in private ranges are blocked (opt-out for local test servers via the developer setting)
-- **Redirects are re-validated hop by hop** — a redirect to `10.x` is refused
-- User URLs are passed to child processes as argv arrays — **never shell-interpolated**
-- Downloads stream to temp files inside the download folder; partials are cleaned up
-- All library/ZIP/delete operations are confined to the download folder (path-traversal checked)
-- Filenames sanitized (Windows-illegal chars, device names, length caps); overwrites avoided by default
-- TLS certificate verification is never disabled
-- No public server binding; nothing listens on a port
-
-## Testing
-
-```bat
-npm test                 :: 39 automated tests
-npm run smoke            :: app boots, window loads (headless-friendly)
-node scripts\integration-check.mjs --download   :: real network e2e
-```
-
-Coverage (external services mocked only where unavoidable — local HTTP servers are real):
-
-- URL validation, SSRF/private-network blocking, redirect re-validation
-- Filename sanitization, path traversal, unique-path logic
-- Provider registry: platform URL mapping, direct-file precedence, generic fallback, capability matrix honesty (no provider may claim account export; auth-gated ops must say so)
-- yt-dlp output parsing (progress lines, sizes, destination, errors), format-option building, result-file discovery
-- Queue DB: schema, state transitions, interrupted-job recovery, WAL persistence across reopen
-- Direct downloads: streaming + progress, redirects, size limits, temp cleanup
-- Library: recursive scan with real stats, ZIP export (real PK bytes, relative names), path confinement on ZIP/delete
-- IPC security: every preload channel has a main handler; every event channel is actually emitted
-
-## Troubleshooting
-
-| Symptom | Fix |
-| --- | --- |
-| "yt-dlp is not installed" | `npm run setup-bins` or Settings → Binaries → Install |
-| "you need to install ffmpeg" | `npm install` again (ffmpeg-static postinstall); check Settings → Binaries |
-| "Site layout changed / could not extract" | Update yt-dlp (Settings → Binaries → Install/update) and retry |
-| "age-restricted / sign in" | Add `cookies.txt` from your authorized account in Settings → Authorization |
-| "403 / forbidden" | Content may be region- or login-gated; cookies.txt from your account may help |
-| "Access to private addresses not allowed" | By design (SSRF protection). For local test servers enable Settings → Network safety → allow local network |
-| GPU disk-cache warnings in the console | Harmless Chromium cache warnings on some Windows setups |
-| App won't start after Windows update | Run `npm run setup-bins` (re-verifies yt-dlp) and check `%APPDATA%\mediavault\logs\` |
-
-## Known limitations (as of 0.1.0)
-
-- **Pause/resume of an in-flight download is not implemented** — you can cancel and retry; interrupted jobs (e.g. app closed mid-download) return to the queue on next start and yt-dlp resumes partial files where the server allows.
-- 15 of 16 platform providers are registered and share the verified yt-dlp path, but only YouTube has been individually exercised end-to-end; each is labeled `untested` in the registry until verified.
-- SoundCloud streams are limited to the quality the server serves.
-- X (Twitter) is frequently rate-limited by the site itself.
-- The local library is a live filesystem scan (no separate index) — very large folders may scan slowly.
-- Batch downloads use "best available" per item unless you probe individually.
-
-## Third-party components
-
-yt-dlp (MIT), FFmpeg/FFprobe (GPL builds via npm static packages), Electron, Next.js, React, Tailwind CSS, better-sqlite3, archiver, Lucide, Framer Motion, Radix UI, Sonner. FFmpeg's GPL applies to the bundled binaries — fine for personal local use; redistribution of the binaries carries GPL obligations.
+---
 
 ## License
 
-MIT (project code).
+MantiCollect is open-source software licensed under the **[MIT License](LICENSE)**.
+
+### Third-Party Software Notices
+* `yt-dlp`: The Unlicense / MIT
+* `ffmpeg` / `ffprobe`: GPL / LGPL static binaries (included for local personal use via npm packages)
+* `better-sqlite3`: MIT
+* `Electron`, `Next.js`, `React`, `Tailwind CSS`: MIT
