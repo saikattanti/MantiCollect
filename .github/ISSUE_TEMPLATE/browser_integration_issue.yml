@@ -1,0 +1,57 @@
+name: Browser Extension & Native Host Issue
+description: Report an issue with the Chrome/Edge extension, Native Messaging Host, or loopback bridge
+title: "[Extension]: "
+labels: ["type: bug", "area: browser-extension", "status: triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to report issues connecting the browser extension to MantiCollect desktop, Native Messaging Host registration, or download interception.
+
+  - type: dropdown
+    id: browser
+    attributes:
+      label: Browser & Version
+      options:
+        - Google Chrome
+        - Microsoft Edge
+        - Brave
+        - Other Chromium-based browser
+    validations:
+      required: true
+
+  - type: dropdown
+    id: bridge_mode
+    attributes:
+      label: Connection Mode
+      options:
+        - Native Messaging Host (stdio)
+        - Loopback HTTP Bridge (127.0.0.1:52443)
+        - Both / Unknown
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description of Problem
+      description: What happened when using the browser extension or native host?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      placeholder: |
+        1. Open Chrome
+        2. Click extension icon
+        3. Badge says 'Not Connected'
+    validations:
+      required: true
+
+  - type: textarea
+    id: target_url
+    attributes:
+      label: Test URL / Page
+      description: What public URL were you attempting to download or hand off? (Sanitize any tokens/keys)

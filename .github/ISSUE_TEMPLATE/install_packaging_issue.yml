@@ -1,0 +1,52 @@
+name: Installation & Packaging Issue
+description: Report an issue with the Windows installer, shortcuts, uninstallation, or upgrade migration
+title: "[Packaging]: "
+labels: ["type: bug", "area: packaging", "status: triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to report issues with the Windows NSIS installer, data migration, shortcut generation, or uninstallation.
+
+  - type: input
+    id: installer_version
+    attributes:
+      label: Installer Version / File Name
+      description: What installer executable or version did you run?
+      placeholder: "e.g. MantiCollect-Setup-0.1.0.exe"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scenario
+    attributes:
+      label: Installation Scenario
+      options:
+        - Fresh installation (clean machine)
+        - Upgrade installation over existing MantiCollect
+        - Migration from legacy MediaVault
+        - Uninstallation
+        - Portable run
+    validations:
+      required: true
+
+  - type: input
+    id: install_path
+    attributes:
+      label: Installation Directory
+      description: Where did you install the application? (e.g. `%LOCALAPPDATA%\Programs\MantiCollect` or custom path)
+      placeholder: "%LOCALAPPDATA%\\Programs\\MantiCollect"
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Issue Description
+      description: Describe the installation, upgrade, or uninstallation issue encountered.
+    validations:
+      required: true
+
+  - type: textarea
+    id: error_details
+    attributes:
+      label: Error Message / Screenshots
+      description: Provide any installer error dialogs, SmartScreen warnings, or error codes.

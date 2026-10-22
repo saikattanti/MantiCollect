@@ -1,0 +1,31 @@
+name: Documentation Improvement
+description: Suggest fixes or additions to MantiCollect documentation or guides
+title: "[Docs]: "
+labels: ["type: documentation", "status: triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Help us keep documentation clear, accurate, and up-to-date.
+
+  - type: input
+    id: doc_file
+    attributes:
+      label: Documentation Page or File
+      placeholder: "e.g. README.md, docs/ARCHITECTURE.md, docs/DISTRIBUTION_AND_INSTALLATION.md"
+    validations:
+      required: true
+
+  - type: textarea
+    id: issue_description
+    attributes:
+      label: What is missing or inaccurate?
+      description: Explain the unclear, missing, or outdated information.
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggested_fix
+    attributes:
+      label: Suggested Improvement
+      description: Provide your proposed wording or structure.

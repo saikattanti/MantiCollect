@@ -1,0 +1,95 @@
+# MantiCollect GitHub Label Taxonomy
+# Format: name, color (hex without #), description
+
+# --- TYPE ---
+- name: "type: bug"
+  color: "d73a4a"
+  description: "Something isn't working as expected or causes an error"
+
+- name: "type: feature"
+  color: "a2eeef"
+  description: "New functionality or capability request"
+
+- name: "type: enhancement"
+  color: "a2d2ff"
+  description: "Improvement to an existing feature or performance"
+
+- name: "type: documentation"
+  color: "0075ca"
+  description: "Improvements or additions to documentation or guides"
+
+- name: "type: question"
+  color: "d876e3"
+  description: "User inquiry, configuration question, or support request"
+
+# --- PRIORITY ---
+- name: "priority: critical"
+  color: "b60205"
+  description: "Blocks core functionality, data corruption risk, or severe crash"
+
+- name: "priority: high"
+  color: "d93f0b"
+  description: "Important issue affecting key user workflows"
+
+- name: "priority: medium"
+  color: "fbca04"
+  description: "Normal priority issue or non-blocking defect"
+
+- name: "priority: low"
+  color: "0e8a16"
+  description: "Minor polish, cosmetic issue, or low-impact task"
+
+# --- STATUS ---
+- name: "status: triage"
+  color: "ededed"
+  description: "Newly submitted issue awaiting maintainer review"
+
+- name: "status: in progress"
+  color: "bfdadc"
+  description: "Actively being worked on by a contributor"
+
+- name: "status: blocked"
+  color: "e99695"
+  description: "Blocked by an upstream dependency or external factor"
+
+- name: "status: needs reproduction"
+  color: "f9d0c4"
+  description: "Requires clearer reproduction steps or test case"
+
+# --- AREA ---
+- name: "area: downloads"
+  color: "1d76db"
+  description: "Segmented engine, yt-dlp, bandwidth, and download queue"
+
+- name: "area: library"
+  color: "5319e7"
+  description: "Media library scanning, collections, and playlist management"
+
+- name: "area: storage"
+  color: "0052cc"
+  description: "S3, WebDAV, SFTP cloud storage, and backup scheduler"
+
+- name: "area: browser-extension"
+  color: "fef2c0"
+  description: "Manifest V3 extension, native messaging host, and loopback bridge"
+
+- name: "area: security"
+  color: "ee0701"
+  description: "Security boundaries, credentials, SSRF, and input validation"
+
+- name: "area: packaging"
+  color: "c5def5"
+  description: "NSIS installer, release packaging, and desktop shortcuts"
+
+- name: "area: ui"
+  color: "e9967a"
+  description: "Next.js renderer, Tailwind styles, themes, and accessibility"
+
+# --- CONTRIBUTOR ---
+- name: "good first issue"
+  color: "7057ff"
+  description: "Good for newcomers to the project"
+
+- name: "help wanted"
+  color: "008672"
+  description: "Extra attention is needed from the community"

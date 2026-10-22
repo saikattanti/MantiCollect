@@ -1,0 +1,81 @@
+name: Bug Report
+description: Report a broken feature, unexpected error, or crash in MantiCollect
+title: "[Bug]: "
+labels: ["type: bug", "status: triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting an issue! Please provide the details below so we can reproduce and fix it.
+        **Security Notice**: Do NOT post passwords, API tokens, cloud secret keys, or private download URLs.
+
+  - type: input
+    id: version
+    attributes:
+      label: Application Version
+      description: What version of MantiCollect are you using? (Check in About or settings)
+      placeholder: "e.g. 0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      description: Which Windows version and architecture are you running?
+      options:
+        - Windows 11 (x64)
+        - Windows 10 (x64)
+        - Windows Server (x64)
+        - Other (specify in summary)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: reproducibility
+    attributes:
+      label: Reproducibility
+      description: How often does this bug happen?
+      options:
+        - Every time (100% reproducible)
+        - Often (intermittent but frequent)
+        - Rarely (difficult to reproduce)
+        - Occurred once
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Bug Description & Summary
+      description: A clear and concise description of what went wrong.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Step-by-step instructions to reproduce the issue.
+      placeholder: |
+        1. Open MantiCollect
+        2. Paste URL 'https://...'
+        3. Click 'Download'
+        4. See error message
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs. Actual Behavior
+      description: What did you expect to happen, and what actually occurred?
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized Application Logs / Error Messages
+      description: Paste any error messages from the app or log files in `%APPDATA%\MantiCollect\logs\`. Make sure to redact sensitive info.
+      render: shell
