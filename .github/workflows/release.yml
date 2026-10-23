@@ -42,6 +42,8 @@ jobs:
 
       - name: Resolve and validate target release tag and commit
         id: resolve-tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
         run: |
           # 1. Determine target tag from triggering event
@@ -56,10 +58,11 @@ jobs:
             exit 1
           }
 
+          # 2. Fetch tags from remote origin to guarantee tag exists
           Write-Host "Fetching tags from remote origin..."
           git fetch --tags origin
 
-          # 2. Verify target tag exists remotely on origin and resolve its target commit
+          # 3. Verify target tag exists remotely on origin and resolve its target commit
           $tagCommit = (git rev-list -n 1 "refs/tags/$targetTag" 2>$null)
           if (-not $tagCommit) {
             Write-Error "Target tag '$targetTag' does not exist in repository git history on origin!"
@@ -67,7 +70,15 @@ jobs:
           }
           Write-Host "Target tag '$targetTag' points to commit $tagCommit on origin."
 
-          # 3. Check out the EXACT commit referenced by the tag for building
+          # 4. Check for duplicate release on GitHub before proceeding with build
+          Write-Host "Checking for existing release for tag '$targetTag' on ${{ github.repository }}..."
+          node scripts/check-existing-release.mjs --tag "$targetTag" --repo "${{ github.repository }}"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Release validation check failed with exit code $LASTEXITCODE. Aborting build."
+            exit 1
+          }
+
+          # 5. Check out the EXACT commit referenced by the tag for building
           Write-Host "Checking out exact tagged source commit: $tagCommit..."
           git checkout $tagCommit
           $checkedOutCommit = (git rev-parse HEAD).Trim()
@@ -77,7 +88,7 @@ jobs:
           }
           Write-Host "✓ Checked out source commit $checkedOutCommit for building."
 
-          # 4. Validate package.json at the checked-out commit
+          # 6. Validate package.json at the checked-out commit
           $pkg = Get-Content package.json -Raw | ConvertFrom-Json
           $pkgVersion = $pkg.version
           $expectedTag = "v$pkgVersion"
@@ -87,26 +98,12 @@ jobs:
           }
           Write-Host "✓ Verified: Target tag $targetTag matches package.json version $pkgVersion at commit $tagCommit"
 
-          # 5. Check for duplicate release on GitHub
-          $releaseExists = $false
-          try {
-            gh release view $targetTag --repo ${{ github.repository }} 2>$null
-            if ($LASTEXITCODE -eq 0) {
-              $releaseExists = $true
-            }
-          } catch {
-            $releaseExists = $false
-          }
-
-          if ($releaseExists) {
-            Write-Error "A release for tag '$targetTag' already exists on GitHub! Aborting build to prevent duplicate releases."
-            exit 1
-          }
-          Write-Host "✓ Verified: No existing release for $targetTag on ${{ github.repository }}."
-
-          # 6. Export outputs for subsequent steps and publish job
+          # 7. Export outputs for subsequent steps and publish job
           "release_tag=$targetTag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "target_commit=$tagCommit" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+          # 8. Explicit exit 0 ensures pwsh never leaks native command exit codes
+          exit 0
 
       - name: Install dependencies reproducibly
         run: npm ci
@@ -265,9 +262,10 @@ jobs:
           $TARGET_COMMIT = "${{ needs.build-and-package.outputs.target_commit }}"
 
           # Verify no release already exists on GitHub for this tag
-          $existingRelease = gh release view $TAG_NAME --repo ${{ github.repository }} 2>&1
-          if ($LASTEXITCODE -eq 0) {
-            Write-Error "A release for tag '$TAG_NAME' already exists on GitHub! To prevent accidental overwrites, release creation aborted."
+          git checkout origin/main -- scripts/check-existing-release.mjs
+          node scripts/check-existing-release.mjs --tag "$TAG_NAME" --repo "${{ github.repository }}"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Release validation check failed with exit code $LASTEXITCODE. Aborting release creation."
             exit 1
           }
 
@@ -308,3 +306,4 @@ jobs:
             --notes $releaseNotes
 
           Write-Host "✓ Draft release created successfully on ${{ github.repository }} for $TAG_NAME"
+          exit 0

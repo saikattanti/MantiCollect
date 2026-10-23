@@ -21,6 +21,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { checkExistingRelease } from './check-existing-release.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, '..');
@@ -136,13 +137,15 @@ try {
 }
 
 // Check if release already exists on GitHub
-try {
-  execFileSync('gh', ['release', 'view', targetTag, '--repo', 'saikattanti/MantiCollect'], { stdio: 'pipe' });
+const checkResult = checkExistingRelease({ tag: targetTag, repo: 'saikattanti/MantiCollect' });
+if (checkResult.status === 'EXISTS') {
   console.error(`\n[ERROR] A release for tag ${targetTag} already exists on GitHub. Aborting to avoid overwrite.`);
   process.exit(1);
-} catch {
-  // Release does not exist yet, safe to proceed
+} else if (checkResult.status !== 'NOT_FOUND') {
+  console.error(`\n[ERROR] Failed to verify release status for ${targetTag}: ${checkResult.message}`);
+  process.exit(2);
 }
+console.log(`  ✓ Verified: No existing release for ${targetTag} on GitHub.`);
 
 console.log(`\n[APPLY MODE] Creating DRAFT release ${targetTag} on GitHub...`);
 try {
