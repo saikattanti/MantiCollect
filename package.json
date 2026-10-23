@@ -21,6 +21,7 @@
     "package:extension": "node scripts/package-extension.mjs",
     "test": "node --test \"test/**/*.test.js\"",
     "smoke": "node scripts/smoke.mjs",
+    "verify": "node scripts/verify-repo.mjs",
     "setup-bins": "node scripts/setup-bins.mjs"
   },
   "build": {

@@ -12,7 +12,7 @@ on:
         default: 'false'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.workflow }}-${{ github.ref }}
@@ -20,8 +20,10 @@ concurrency:
 
 jobs:
   build-and-package:
-    name: Build & Package Windows Installer
+    name: Build & Package Windows Release
     runs-on: windows-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout repository
@@ -46,10 +48,10 @@ jobs:
           }
           Write-Host "Tag $actualTag matches package.json version $pkgVersion"
 
-      - name: Install dependencies
+      - name: Install dependencies reproducibly
         run: npm ci
 
-      - name: Verify branding assets
+      - name: Verify branding assets and generate icons
         run: node scripts/generate-icons.mjs
 
       - name: Package browser extension
@@ -58,8 +60,14 @@ jobs:
       - name: Run automated test suite
         run: npm test
 
-      - name: Build Next.js static export
+      - name: Build Next.js static production export
         run: npm run build
+
+      - name: Run Electron startup smoke test
+        run: node scripts/smoke.mjs
+
+      - name: Clean stale release build artifacts
+        run: node scripts/clean-release.mjs
 
       - name: Package Windows NSIS installer
         env:
@@ -69,15 +77,22 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --win --publish never
 
-      - name: Verify installer artifact
+      - name: Verify installer and extension artifacts
         shell: pwsh
         run: |
           $installer = Get-ChildItem -Path release/MantiCollect-Setup-*.exe -File
           if (-not $installer) {
-            Write-Error "Expected MantiCollect-Setup-*.exe was not generated in release/!"
+            Write-Error "Expected MantiCollect-Setup-*.exe was not found in release/!"
             exit 1
           }
           Write-Host "Verified installer: $($installer.FullName) ($($installer.Length) bytes)"
+
+          $extensionZip = Get-ChildItem -Path release/manticollect-browser-extension-*.zip -File
+          if (-not $extensionZip) {
+            Write-Error "Expected manticollect-browser-extension-*.zip was not found in release/!"
+            exit 1
+          }
+          Write-Host "Verified browser extension package: $($extensionZip.FullName) ($($extensionZip.Length) bytes)"
 
       - name: Generate SHA-256 checksums
         shell: pwsh
@@ -95,10 +110,10 @@ jobs:
           Write-Host "Generated SHA256SUMS.txt:"
           Get-Content release/SHA256SUMS.txt
 
-      - name: Upload installer and extension artifacts
+      - name: Upload distributable release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: MantiCollect-Windows-Package
+          name: manticollect-release-artifacts
           path: |
             release/*.exe
             release/*.zip
@@ -108,8 +123,36 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  publish-draft-release:
+    name: Publish Draft GitHub Release
+    needs: build-and-package
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.create_draft_release == 'true'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: manticollect-release-artifacts
+          path: release
+
+      - name: Verify downloaded artifacts
+        shell: pwsh
+        run: |
+          if (-not (Test-Path release/SHA256SUMS.txt)) {
+            Write-Error "SHA256SUMS.txt missing from downloaded artifacts!"
+            exit 1
+          }
+          $installer = Get-ChildItem -Path release/MantiCollect-Setup-*.exe -File
+          if (-not $installer) {
+            Write-Error "Installer binary missing from downloaded artifacts!"
+            exit 1
+          }
+          Write-Host "Ready to publish draft release with verified artifacts."
+
       - name: Create Draft GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.create_draft_release == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
@@ -117,24 +160,24 @@ jobs:
           $TAG_NAME = if ("${{ github.ref }}".StartsWith("refs/tags/")) { "${{ github.ref }}".Replace("refs/tags/", "") } else { "v0.1.0-manual" }
           $isSigned = if ("${{ secrets.CSC_LINK }}" -ne "") { "Signed with Authenticode certificate" } else { "Unsigned development build (verify SHA-256 checksum)" }
           Write-Host "Creating draft release for $TAG_NAME..."
-          
+
           $releaseNotes = @"
           ## MantiCollect $TAG_NAME — A Mantitup Product
-          
+
           Local-first universal media downloader and digital collector for Windows.
-          
+
           ### Included Artifacts
           - **MantiCollect-Setup-$($TAG_NAME.TrimStart('v')).exe**: Windows NSIS desktop installer (per-user `%LOCALAPPDATA%\Programs\MantiCollect`).
           - **manticollect-browser-extension-$TAG_NAME.zip**: Manifest V3 browser extension for Google Chrome and Microsoft Edge.
           - **SHA256SUMS.txt**: SHA-256 integrity checksums for all release binaries.
-          
+
           ### Security & Integrity
           - **Authenticode Status**: $isSigned
           - **Verification**: Review SHA256SUMS.txt prior to installation.
-          
+
           *Note: This release is created as a draft for maintainer verification. Publication requires explicit maintainer approval.*
           "@
-          
+
           gh release create $TAG_NAME release/*.exe release/*.zip release/*.blockmap release/latest.yml release/SHA256SUMS.txt `
             --title "MantiCollect $TAG_NAME" `
             --draft `

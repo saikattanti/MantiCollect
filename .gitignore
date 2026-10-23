@@ -19,6 +19,9 @@ out/
 *.key
 *.pem
 credentials.enc
+*.db
+*.db-wal
+*.db-shm
 
 # Runtime & Temp files
 *.log

@@ -40,6 +40,9 @@ jobs:
       - name: Package and validate browser extension
         run: node scripts/package-extension.mjs
 
+      - name: Verify repository hygiene and links
+        run: npm run verify
+
       - name: Execute automated test suite
         run: npm test
 

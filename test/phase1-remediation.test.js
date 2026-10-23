@@ -48,19 +48,62 @@ test('main.js sets solid opaque window fallback and mica on Windows 11', () => {
 });
 
 test('globals.css defines solid base background on html and body', () => {
-  const css = fs.readFileSync(path.join(root, 'app', 'globals.css'), 'utf8');
-  assert.ok(
-    css.includes('html {\n  background-color: var(--mv-bg);\n}'),
+  const rawCss = fs.readFileSync(path.join(root, 'app', 'globals.css'), 'utf8');
+  const css = rawCss.replace(/\r\n/g, '\n');
+
+  // Verify html has solid background-color: var(--mv-bg)
+  const htmlRuleMatch = css.match(/(?:^|\n)\s*html\s*\{([^}]+)\}/);
+  assert.ok(htmlRuleMatch, 'html block must be defined in globals.css');
+  assert.match(
+    htmlRuleMatch[1],
+    /background-color\s*:\s*var\(--mv-bg\)\s*;?/,
     'html must have solid background-color: var(--mv-bg)'
   );
-  assert.ok(
-    css.includes('body {\n  @apply font-sans text-t1 antialiased;\n  background-color: var(--mv-bg);'),
+
+  // Verify body has solid background-color: var(--mv-bg)
+  const bodyRuleMatch = css.match(/(?:^|\n)\s*body\s*\{([^}]+)\}/);
+  assert.ok(bodyRuleMatch, 'body block must be defined in globals.css');
+  assert.match(
+    bodyRuleMatch[1],
+    /background-color\s*:\s*var\(--mv-bg\)\s*;?/,
     'body must have solid background-color: var(--mv-bg) to prevent desktop bleed'
   );
+
+  // Prohibited translucent alpha or transparent keywords must not be present
   assert.ok(
     !css.includes('color-mix(in srgb, var(--mv-bg) calc(var(--mv-body-alpha) * 100%), transparent)'),
     'translucent body background alpha must be removed'
   );
+  assert.doesNotMatch(
+    css,
+    /(?:html|body)\s*\{[^}]*background(?:-color)?\s*:\s*transparent/,
+    'neither html nor body may declare transparent background'
+  );
+});
+
+test('globals.css background verification is resilient to both LF and CRLF line endings', () => {
+  function verifyCss(inputCss) {
+    const normalized = inputCss.replace(/\r\n/g, '\n');
+    const htmlMatch = normalized.match(/(?:^|\n)\s*html\s*\{([^}]+)\}/);
+    const bodyMatch = normalized.match(/(?:^|\n)\s*body\s*\{([^}]+)\}/);
+    if (!htmlMatch || !bodyMatch) return false;
+    const hasHtmlBg = /background-color\s*:\s*var\(--mv-bg\)\s*;?/.test(htmlMatch[1]);
+    const hasBodyBg = /background-color\s*:\s*var\(--mv-bg\)\s*;?/.test(bodyMatch[1]);
+    const hasTranslucent = normalized.includes('color-mix(in srgb, var(--mv-bg) calc(var(--mv-body-alpha) * 100%), transparent)');
+    return hasHtmlBg && hasBodyBg && !hasTranslucent;
+  }
+
+  const validLf = 'html {\n  background-color: var(--mv-bg);\n}\nbody {\n  background-color: var(--mv-bg);\n}';
+  const validCrlf = 'html {\r\n  background-color: var(--mv-bg);\r\n}\r\nbody {\r\n  background-color: var(--mv-bg);\r\n}';
+  const missingHtml = 'html {\n  color: red;\n}\nbody {\n  background-color: var(--mv-bg);\n}';
+  const missingBody = 'html {\n  background-color: var(--mv-bg);\n}\nbody {\n  color: blue;\n}';
+  const translucent = 'html {\n  background-color: var(--mv-bg);\n}\nbody {\n  background-color: var(--mv-bg);\n  color-mix(in srgb, var(--mv-bg) calc(var(--mv-body-alpha) * 100%), transparent);\n}';
+
+  assert.equal(verifyCss(validLf), true, 'Valid LF CSS must pass');
+  assert.equal(verifyCss(validCrlf), true, 'Valid CRLF CSS must pass');
+  assert.equal(verifyCss(missingHtml), false, 'CSS missing html background must fail');
+  assert.equal(verifyCss(missingBody), false, 'CSS missing body background must fail');
+  assert.equal(verifyCss(translucent), false, 'CSS with translucent background expression must fail');
 });
 
 /* =====================================================================

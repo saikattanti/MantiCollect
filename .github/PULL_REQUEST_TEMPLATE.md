@@ -37,12 +37,14 @@
 
 <!-- Add before/after screenshots for visual UI changes -->
 
-## Security & Compatibility Considerations
+## Security, Privacy & Hygiene Checklist
 
 - [ ] Untrusted inputs pass validation (no shell injection, SSRF, or path traversal)
-- [ ] No plaintext passwords, keys, or tokens exposed or logged
+- [ ] No plaintext passwords, API keys, or cloud credentials are exposed or logged
+- [ ] No personal tokens, machine paths, or local `.env` files are committed
+- [ ] No temporary files, local SQLite databases (`.db`), downloads, or build artifacts staged
 - [ ] Backward compatibility preserved for existing databases and settings
-- [ ] Interrupted operations are recoverable
+- [ ] Interrupted operations remain safely recoverable
 
 ## Documentation Checklist
 

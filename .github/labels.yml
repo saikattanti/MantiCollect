@@ -85,6 +85,31 @@
   color: "e9967a"
   description: "Next.js renderer, Tailwind styles, themes, and accessibility"
 
+- name: "area: performance"
+  color: "d4c5f9"
+  description: "Download throughput, memory usage, CPU, or responsiveness"
+
+- name: "area: accessibility"
+  color: "006b75"
+  description: "Keyboard navigation, screen readers, contrast, and ARIA landmarks"
+
+- name: "area: ci-build"
+  color: "fbca04"
+  description: "GitHub Actions workflows, build scripts, and test automation"
+
+# --- RESOLUTION & TRIAGE ---
+- name: "wontfix"
+  color: "ffffff"
+  description: "This will not be worked on or is out of scope"
+
+- name: "duplicate"
+  color: "cfd3d7"
+  description: "This issue or pull request already exists"
+
+- name: "invalid"
+  color: "e4e669"
+  description: "This doesn't seem right or lacks necessary detail"
+
 # --- CONTRIBUTOR ---
 - name: "good first issue"
   color: "7057ff"
