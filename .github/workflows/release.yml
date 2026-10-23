@@ -24,6 +24,9 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: read
+    outputs:
+      release_tag: ${{ steps.resolve-tag.outputs.release_tag }}
+      target_commit: ${{ steps.resolve-tag.outputs.target_commit }}
 
     steps:
       - name: Checkout repository
@@ -37,11 +40,11 @@ jobs:
           node-version: 22.x
           cache: 'npm'
 
-      - name: Validate target tag against package.json
+      - name: Resolve and validate target release tag and commit
+        id: resolve-tag
         shell: pwsh
         run: |
-          $pkgVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          $expectedTag = "v$pkgVersion"
+          # 1. Determine target tag from triggering event
           $targetTag = if ("${{ github.ref_type }}" -eq "tag") {
             "${{ github.ref_name }}"
           } else {
@@ -53,25 +56,57 @@ jobs:
             exit 1
           }
 
-          if ($targetTag -ne $expectedTag) {
-            Write-Error "Tag mismatch! Target tag '$targetTag' does not match package.json version '$expectedTag'."
+          Write-Host "Fetching tags from remote origin..."
+          git fetch --tags origin
+
+          # 2. Verify target tag exists remotely on origin and resolve its target commit
+          $tagCommit = (git rev-list -n 1 "refs/tags/$targetTag" 2>$null)
+          if (-not $tagCommit) {
+            Write-Error "Target tag '$targetTag' does not exist in repository git history on origin!"
             exit 1
           }
+          Write-Host "Target tag '$targetTag' points to commit $tagCommit on origin."
 
-          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            git fetch --tags origin
-            $tagCommit = (git rev-list -n 1 "$targetTag" 2>$null)
-            $headCommit = (git rev-parse HEAD 2>$null)
-            if (-not $tagCommit) {
-              Write-Error "Target tag '$targetTag' does not exist in repository git history!"
-              exit 1
-            }
-            if ($tagCommit -ne $headCommit) {
-              Write-Error "Target tag '$targetTag' points to commit $tagCommit, but current HEAD is $headCommit!"
-              exit 1
-            }
+          # 3. Check out the EXACT commit referenced by the tag for building
+          Write-Host "Checking out exact tagged source commit: $tagCommit..."
+          git checkout $tagCommit
+          $checkedOutCommit = (git rev-parse HEAD).Trim()
+          if ($checkedOutCommit -ne $tagCommit) {
+            Write-Error "Checkout failed! Expected $tagCommit, currently at $checkedOutCommit"
+            exit 1
           }
-          Write-Host "Target tag $targetTag validated successfully against package.json version $pkgVersion"
+          Write-Host "✓ Checked out source commit $checkedOutCommit for building."
+
+          # 4. Validate package.json at the checked-out commit
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          $pkgVersion = $pkg.version
+          $expectedTag = "v$pkgVersion"
+          if ($targetTag -ne $expectedTag) {
+            Write-Error "Tag mismatch! Target tag '$targetTag' does not match package.json version '$expectedTag' at commit $tagCommit."
+            exit 1
+          }
+          Write-Host "✓ Verified: Target tag $targetTag matches package.json version $pkgVersion at commit $tagCommit"
+
+          # 5. Check for duplicate release on GitHub
+          $releaseExists = $false
+          try {
+            gh release view $targetTag --repo ${{ github.repository }} 2>$null
+            if ($LASTEXITCODE -eq 0) {
+              $releaseExists = $true
+            }
+          } catch {
+            $releaseExists = $false
+          }
+
+          if ($releaseExists) {
+            Write-Error "A release for tag '$targetTag' already exists on GitHub! Aborting build to prevent duplicate releases."
+            exit 1
+          }
+          Write-Host "✓ Verified: No existing release for $targetTag on ${{ github.repository }}."
+
+          # 6. Export outputs for subsequent steps and publish job
+          "release_tag=$targetTag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "target_commit=$tagCommit" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Install dependencies reproducibly
         run: npm ci
@@ -127,15 +162,24 @@ jobs:
         run: |
           $installer = Get-ChildItem -Path release/MantiCollect-Setup-*.exe -File | Select-Object -First 1
           $extensionZip = Get-ChildItem -Path release/manticollect-browser-extension-*.zip -File | Select-Object -First 1
-          $distributables = @($installer, $extensionZip)
+          if (-not $installer -or $installer.Length -eq 0) {
+            Write-Error "Missing or empty installer!"
+            exit 1
+          }
+          if (-not $extensionZip -or $extensionZip.Length -eq 0) {
+            Write-Error "Missing or empty extension package!"
+            exit 1
+          }
 
+          $distributables = @($installer, $extensionZip)
           $checksums = foreach ($file in $distributables) {
             $hash = (Get-FileHash -Path $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
             "$hash  $($file.Name)"
           }
-          $checksums | Set-Content -Path release/SHA256SUMS.txt -Encoding UTF8
-          Write-Host "Generated SHA256SUMS.txt:"
-          Get-Content release/SHA256SUMS.txt
+          $checksumFile = "release/SHA256SUMS.txt"
+          $checksums | Set-Content -Path $checksumFile -Encoding UTF8
+          Write-Host "Generated $checksumFile :"
+          Get-Content $checksumFile
 
       - name: Upload distributable release artifacts
         uses: actions/upload-artifact@v4
@@ -157,9 +201,10 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repository at target release commit
         uses: actions/checkout@v4
         with:
+          ref: ${{ needs.build-and-package.outputs.target_commit }}
           fetch-depth: 0
 
       - name: Download release artifacts
@@ -211,23 +256,15 @@ jobs:
           }
           Write-Host "All $($verifiedFiles.Count) artifacts verified against checksum manifest."
 
-      - name: Check for existing release and create Draft GitHub Release
+      - name: Create Draft GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
         run: |
-          $TAG_NAME = if ("${{ github.ref_type }}" -eq "tag") {
-            "${{ github.ref_name }}"
-          } else {
-            "${{ inputs.release_tag }}".Trim()
-          }
+          $TAG_NAME = "${{ needs.build-and-package.outputs.release_tag }}"
+          $TARGET_COMMIT = "${{ needs.build-and-package.outputs.target_commit }}"
 
-          if (-not $TAG_NAME.StartsWith("v")) {
-            Write-Error "Invalid tag name '$TAG_NAME'. Must start with 'v'."
-            exit 1
-          }
-
-          # Check if a release already exists on GitHub for this tag
+          # Verify no release already exists on GitHub for this tag
           $existingRelease = gh release view $TAG_NAME --repo ${{ github.repository }} 2>&1
           if ($LASTEXITCODE -eq 0) {
             Write-Error "A release for tag '$TAG_NAME' already exists on GitHub! To prevent accidental overwrites, release creation aborted."
@@ -250,18 +287,22 @@ jobs:
           - **SHA256SUMS.txt**: SHA-256 integrity checksum manifest.
 
           ### Security & Integrity
+          - **Commit Target**: $TARGET_COMMIT
           - **Authenticode Status**: $isSigned
+          - **Platform Compatibility**: Tested and verified on Windows 10/11 x64 (macOS and Linux are not officially validated).
           - **Integrity Verification**: Compare downloaded files with `SHA256SUMS.txt` prior to installation.
 
           *Note: This release is created as a draft for maintainer review. Publication requires explicit manual approval.*
           "@
 
-          Write-Host "Creating draft release for $TAG_NAME via GitHub CLI on repo ${{ github.repository }}..."
+          Write-Host "Creating draft release for $TAG_NAME (commit $TARGET_COMMIT) via GitHub CLI on repo ${{ github.repository }}..."
           gh release create $TAG_NAME `
             $installer.FullName `
             $extension.FullName `
             $checksumManifest `
             --repo ${{ github.repository }} `
+            --target $TARGET_COMMIT `
+            --verify-tag `
             --title "MantiCollect $TAG_NAME" `
             --draft `
             --notes $releaseNotes

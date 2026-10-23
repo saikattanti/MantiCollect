@@ -97,17 +97,19 @@ console.log(`  ✓ Written to: ${path.relative(root, checksumFile)}`);
 
 const releaseNotes = `## MantiCollect ${targetTag} — A Mantitup Product
 
-Local-first universal media downloader and digital collector for Windows.
+Local-first universal media downloader, format converter, and digital collector for Windows.
 
-### Included Artifacts
+### Included Distributables
 - **${installer}**: Windows NSIS desktop installer (per-user \`%LOCALAPPDATA%\\Programs\\MantiCollect\`).
 - **${extension}**: Manifest V3 browser extension for Google Chrome and Microsoft Edge.
-- **SHA256SUMS.txt**: SHA-256 integrity checksums for all release binaries.
+- **SHA256SUMS.txt**: SHA-256 integrity checksum manifest.
 
-### Verification
-Verify downloaded assets against \`SHA256SUMS.txt\` before running.
+### Security & Integrity
+- **Authenticode Status**: Unsigned development build (verify SHA-256 checksum)
+- **Platform Compatibility**: Tested and verified on Windows 10/11 x64 (macOS and Linux are not officially validated).
+- **Integrity Verification**: Compare downloaded files with \`SHA256SUMS.txt\` prior to installation.
 
-*Note: This release is a draft created for owner review.*`;
+*Note: This release is created as a draft for maintainer review. Publication requires explicit manual approval.*`;
 
 if (isDryRun) {
   console.log('\n[DRY RUN MODE] The following `gh release create` command would be executed:');
@@ -116,6 +118,7 @@ if (isDryRun) {
   console.log(`    release/${extension} \\`);
   console.log(`    release/SHA256SUMS.txt \\`);
   console.log(`    --repo saikattanti/MantiCollect \\`);
+  console.log(`    --verify-tag \\`);
   console.log(`    --title "MantiCollect ${targetTag}" \\`);
   console.log(`    --draft`);
   console.log('\nTo create the draft release on GitHub:');
@@ -149,6 +152,7 @@ try {
     path.join(releaseDir, extension),
     checksumFile,
     '--repo', 'saikattanti/MantiCollect',
+    '--verify-tag',
     '--title', `MantiCollect ${targetTag}`,
     '--draft',
     '--notes', releaseNotes
