@@ -1,101 +1,131 @@
 # MantiCollect — Release Checklist & Deployment Procedure
 
-This checklist defines the required verification steps before tagging, packaging, and publishing any production release of MantiCollect.
+This document defines the formal deployment and verification procedure for production releases of **MantiCollect (A Mantitup Product)**.
+
+Actions are explicitly categorized into **[OWNER ACTION]** (manual maintainer decision points) and **[AUTOMATED]** (CI/CD pipeline and scripted validations).
 
 ---
 
-## Pre-Release Verification (Local Environment)
+## Phase 1: Pre-Release Local Verification
 
-- [ ] **1. Clean Working Tree**
-  - Verify `git status` shows no uncommitted or untracked changes.
-  - Ensure the release branch is branched directly from `main`.
+- [ ] **1. [OWNER ACTION] Verify Intended Release Version & Scope**
+  - Confirm target version matches semantic versioning conventions (e.g. `0.1.0`).
+  - Verify version in `package.json` (`"version": "0.1.0"`).
+  - Verify version in `browser-extension/manifest.json` (`"version": "1.0.0"`).
+  - Verify version displayed in `app/(desktop)/about/page.jsx`.
 
-- [ ] **2. Version Consistency**
-  - Verify version in `package.json` matches target release (e.g. `0.1.0`).
-  - Verify version in `package-lock.json` matches `package.json`.
-  - Verify version in `browser-extension/manifest.json` matches release target.
-  - Verify version in `app/(desktop)/about/page.jsx` matches release target.
+- [ ] **2. [OWNER ACTION] Changelog Review**
+  - Verify `CHANGELOG.md` accurately documents all new features, bug fixes, and security enhancements under the target version section.
 
-- [ ] **3. Changelog Maintenance**
-  - Update `CHANGELOG.md` with all new features, fixes, security improvements, and breaking changes under the target version section.
+- [ ] **3. [AUTOMATED] Run Repository Verification**
+  ```powershell
+  npm run verify
+  ```
+  - Confirms all 50 repository hygiene, link, image, and YAML syntax checks pass.
 
-- [ ] **4. Test Suite Execution**
-  ```bash
+- [ ] **4. [AUTOMATED] Execute Full Test Suite**
+  ```powershell
   npm test
   ```
-  - Confirm 100% test pass rate with zero failures or skipped critical tests.
+  - Confirms 100% pass rate (216/216 tests passing).
 
-- [ ] **5. Production Renderer Build**
-  ```bash
+- [ ] **5. [AUTOMATED] Production Static Export Build**
+  ```powershell
   npm run build
   ```
-  - Verify all 17 App Router routes are exported to `dist/` without errors.
+  - Confirms all 17 Next.js App Router routes export cleanly to `dist/`.
 
-- [ ] **6. Electron Application Smoke Test**
-  ```bash
+- [ ] **6. [AUTOMATED] Headless Electron Smoke Test**
+  ```powershell
   npm run smoke
   ```
-  - Verify Electron loads `dist/index.html` and exits cleanly with `SMOKE PASS`.
+  - Confirms Electron boots, loads `dist/index.html`, and reports `SMOKE PASS`.
 
-- [ ] **7. Browser Extension Packaging**
-  ```bash
+- [ ] **7. [AUTOMATED] Package Browser Extension**
+  ```powershell
   npm run package:extension
   ```
-  - Verify `release/manticollect-browser-extension-v<version>.zip` and `release/browser-extension-unpacked` are produced and verified.
-
-- [ ] **8. Local Installer Build & Verification**
-  ```bash
-  npm run dist
-  ```
-  - Verify `release/MantiCollect-Setup-<version>.exe` is created.
-  - Verify executable size is within expected parameters (~250 MB).
-  - Verify installer metadata (Product: MantiCollect, Company: Mantitup).
-
-- [ ] **9. Checksum Generation**
-  ```powershell
-  Get-FileHash release/*.exe, release/*.zip -Algorithm SHA256 | Format-List
-  ```
-  - Record SHA-256 hashes for release documentation.
-
-- [ ] **10. Upgrade & Data-Preservation Verification**
-  - Verify that running migration does not overwrite existing SQLite databases or settings.
-  - Confirm existing credentials in `%APPDATA%\MantiCollect\credentials.enc` remain readable.
+  - Confirms extension manifest, asset files, unpacked directory, and ZIP archive (`manticollect-browser-extension-v1.0.0.zip`).
 
 ---
 
-## GitHub Release Pipeline (Remote CI)
+## Phase 2: Remote CI & Git Synchronization
 
-- [ ] **11. Authorized Version Tag Creation**
-  - **Do NOT create or push tags without explicit maintainer approval.**
-  ```bash
-  git tag -a v<version> -m "Release v<version>"
-  git push origin v<version>
+- [ ] **8. [OWNER ACTION] Push Approved Commits to `origin/main`**
+  ```powershell
+  git push origin main
   ```
 
-- [ ] **12. Release Workflow Execution**
-  - Monitor `.github/workflows/release.yml` run in GitHub Actions.
-  - Verify Windows runner builds installer, runs tests, packages extension, and generates `SHA256SUMS.txt`.
+- [ ] **9. [AUTOMATED / OWNER ACTION] Verify Remote Continuous Integration**
+  ```powershell
+  gh run list --workflow ci.yml --repo saikattanti/MantiCollect --limit 3
+  ```
+  - Ensure the CI workflow for the pushed commit finishes with status **completed (success)**.
 
-- [ ] **13. Draft Release Inspection**
-  - Navigate to GitHub Releases.
-  - Verify the new release is in **Draft** state (never automatically published).
-  - Verify attached binaries:
+- [ ] **10. [OWNER ACTION] Verify and Push Version Tag**
+  - Verify local tag points to the intended commit:
+    ```powershell
+    git tag -l --points-at HEAD
+    git show v<version> --no-patch
+    ```
+  - If creating a new tag:
+    ```powershell
+    git tag -a v<version> -m "Release v<version>"
+    git push origin v<version>
+    ```
+
+---
+
+## Phase 3: Release Pipeline Execution & Artifact Validation
+
+- [ ] **11. [AUTOMATED] Release Pipeline Build & Verification (`release.yml`)**
+  - Tag push automatically triggers the release workflow on `windows-latest`.
+  - `build-and-package` job executes:
+    - Version tag validation against `package.json`.
+    - `npm ci`, icon generation, extension packaging.
+    - Test suite execution (216 tests).
+    - Production build and smoke test.
+    - Windows NSIS installer build (`electron-builder`).
+    - Distributable artifact discovery and non-empty check.
+    - SHA-256 checksum manifest creation (`release/SHA256SUMS.txt`).
+    - Upload of release artifacts.
+
+- [ ] **12. [AUTOMATED] Checksum Recalculation & Integrity Gate**
+  - `publish-draft-release` job:
+    - Checks out repository context.
+    - Downloads distributable artifacts.
+    - Recalculates SHA-256 hashes of every downloaded binary.
+    - Strictly matches hashes against `SHA256SUMS.txt`.
+    - Fails immediately if any file is missing or hash does not match.
+
+- [ ] **13. [AUTOMATED] Draft GitHub Release Creation**
+  - Creates a **Draft** release on GitHub via `gh release create --draft`.
+  - Attaches verified binaries:
     - `MantiCollect-Setup-<version>.exe`
     - `manticollect-browser-extension-v<version>.zip`
     - `SHA256SUMS.txt`
-    - `latest.yml`
-  - Review release notes, Authenticode signature status declaration, and checksums.
-
-- [ ] **14. Explicit Publication Approval**
-  - Only after manual maintainer review, click **Publish release** on GitHub.
+  - *Draft status guarantees that release is never visible publicly without maintainer approval.*
 
 ---
 
-## Post-Release Verification
+## Phase 4: Maintainer Review & Manual Publication
 
-- [ ] **15. Download & Install Verification**
-  - Download the published installer from the GitHub Release page on a clean Windows machine.
-  - Verify SHA-256 checksum matches `SHA256SUMS.txt`.
-  - Install to standard per-user directory `%LOCALAPPDATA%\Programs\MantiCollect`.
-  - Confirm desktop and Start Menu shortcuts function correctly.
-  - Launch application, verify queue, settings, and library.
+- [ ] **14. [OWNER ACTION] Inspect Draft Release on GitHub**
+  - Open [https://github.com/saikattanti/MantiCollect/releases](https://github.com/saikattanti/MantiCollect/releases).
+  - Verify release title, notes, and attached assets.
+  - Review Authenticode code signing declaration.
+
+- [ ] **15. [OWNER ACTION] Download and Verify Release Assets on Clean Machine**
+  - Download `MantiCollect-Setup-<version>.exe` and `SHA256SUMS.txt`.
+  - Verify checksum in PowerShell:
+    ```powershell
+    (Get-FileHash MantiCollect-Setup-<version>.exe -Algorithm SHA256).Hash
+    ```
+  - Execute installer:
+    - Confirm installation to `%LOCALAPPDATA%\Programs\MantiCollect`.
+    - Confirm Desktop and Start Menu shortcuts.
+    - Confirm application launch, settings persistence, and existing database preservation.
+  - Test browser extension in Google Chrome or Microsoft Edge.
+
+- [ ] **16. [OWNER ACTION] Publish Release**
+  - Only when all verification criteria are satisfied, edit the Draft Release on GitHub and click **Publish release**.

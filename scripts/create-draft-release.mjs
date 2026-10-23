@@ -115,6 +115,7 @@ if (isDryRun) {
   console.log(`    release/${installer} \\`);
   console.log(`    release/${extension} \\`);
   console.log(`    release/SHA256SUMS.txt \\`);
+  console.log(`    --repo saikattanti/MantiCollect \\`);
   console.log(`    --title "MantiCollect ${targetTag}" \\`);
   console.log(`    --draft`);
   console.log('\nTo create the draft release on GitHub:');
@@ -131,6 +132,15 @@ try {
   process.exit(1);
 }
 
+// Check if release already exists on GitHub
+try {
+  execFileSync('gh', ['release', 'view', targetTag, '--repo', 'saikattanti/MantiCollect'], { stdio: 'pipe' });
+  console.error(`\n[ERROR] A release for tag ${targetTag} already exists on GitHub. Aborting to avoid overwrite.`);
+  process.exit(1);
+} catch {
+  // Release does not exist yet, safe to proceed
+}
+
 console.log(`\n[APPLY MODE] Creating DRAFT release ${targetTag} on GitHub...`);
 try {
   const ghArgs = [
@@ -138,6 +148,7 @@ try {
     path.join(releaseDir, installer),
     path.join(releaseDir, extension),
     checksumFile,
+    '--repo', 'saikattanti/MantiCollect',
     '--title', `MantiCollect ${targetTag}`,
     '--draft',
     '--notes', releaseNotes

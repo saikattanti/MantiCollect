@@ -6,10 +6,10 @@ on:
       - 'v*'
   workflow_dispatch:
     inputs:
-      create_draft_release:
-        description: 'Create draft GitHub release (true/false)'
-        required: false
-        default: 'false'
+      release_tag:
+        description: 'Existing version tag to package into Draft Release (e.g. v0.1.0)'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -28,6 +28,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -35,18 +37,41 @@ jobs:
           node-version: 22.x
           cache: 'npm'
 
-      - name: Validate version tag against package.json
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Validate target tag against package.json
         shell: pwsh
         run: |
           $pkgVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
           $expectedTag = "v$pkgVersion"
-          $actualTag = "${{ github.ref }}".Replace("refs/tags/", "")
-          if ($actualTag -ne $expectedTag) {
-            Write-Error "Tag mismatch! Git tag '$actualTag' does not match package.json version '$expectedTag'."
+          $targetTag = if ("${{ github.ref_type }}" -eq "tag") {
+            "${{ github.ref_name }}"
+          } else {
+            "${{ inputs.release_tag }}".Trim()
+          }
+
+          if (-not $targetTag.StartsWith("v")) {
+            Write-Error "Invalid tag format '$targetTag'. Tags must start with 'v' (e.g. v0.1.0)."
             exit 1
           }
-          Write-Host "Tag $actualTag matches package.json version $pkgVersion"
+
+          if ($targetTag -ne $expectedTag) {
+            Write-Error "Tag mismatch! Target tag '$targetTag' does not match package.json version '$expectedTag'."
+            exit 1
+          }
+
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            git fetch --tags origin
+            $tagCommit = (git rev-list -n 1 "$targetTag" 2>$null)
+            $headCommit = (git rev-parse HEAD 2>$null)
+            if (-not $tagCommit) {
+              Write-Error "Target tag '$targetTag' does not exist in repository git history!"
+              exit 1
+            }
+            if ($tagCommit -ne $headCommit) {
+              Write-Error "Target tag '$targetTag' points to commit $tagCommit, but current HEAD is $headCommit!"
+              exit 1
+            }
+          }
+          Write-Host "Target tag $targetTag validated successfully against package.json version $pkgVersion"
 
       - name: Install dependencies reproducibly
         run: npm ci
@@ -56,6 +81,9 @@ jobs:
 
       - name: Package browser extension
         run: node scripts/package-extension.mjs
+
+      - name: Verify repository hygiene and links
+        run: npm run verify
 
       - name: Run automated test suite
         run: npm test
@@ -80,31 +108,30 @@ jobs:
       - name: Verify installer and extension artifacts
         shell: pwsh
         run: |
-          $installer = Get-ChildItem -Path release/MantiCollect-Setup-*.exe -File
-          if (-not $installer) {
-            Write-Error "Expected MantiCollect-Setup-*.exe was not found in release/!"
+          $installer = Get-ChildItem -Path release/MantiCollect-Setup-*.exe -File | Select-Object -First 1
+          if (-not $installer -or $installer.Length -eq 0) {
+            Write-Error "Expected non-empty MantiCollect-Setup-*.exe was not found in release/!"
             exit 1
           }
           Write-Host "Verified installer: $($installer.FullName) ($($installer.Length) bytes)"
 
-          $extensionZip = Get-ChildItem -Path release/manticollect-browser-extension-*.zip -File
-          if (-not $extensionZip) {
-            Write-Error "Expected manticollect-browser-extension-*.zip was not found in release/!"
+          $extensionZip = Get-ChildItem -Path release/manticollect-browser-extension-*.zip -File | Select-Object -First 1
+          if (-not $extensionZip -or $extensionZip.Length -eq 0) {
+            Write-Error "Expected non-empty manticollect-browser-extension-*.zip was not found in release/!"
             exit 1
           }
           Write-Host "Verified browser extension package: $($extensionZip.FullName) ($($extensionZip.Length) bytes)"
 
-      - name: Generate SHA-256 checksums
+      - name: Generate SHA-256 checksums manifest
         shell: pwsh
         run: |
-          $artifacts = Get-ChildItem -Path release/*.exe, release/*.zip -File
-          if ($artifacts.Count -eq 0) {
-            Write-Error "No release artifacts found to checksum!"
-            exit 1
-          }
-          $checksums = foreach ($file in $artifacts) {
-            $hash = Get-FileHash -Path $file.FullName -Algorithm SHA256
-            "$($hash.Hash)  $($file.Name)"
+          $installer = Get-ChildItem -Path release/MantiCollect-Setup-*.exe -File | Select-Object -First 1
+          $extensionZip = Get-ChildItem -Path release/manticollect-browser-extension-*.zip -File | Select-Object -First 1
+          $distributables = @($installer, $extensionZip)
+
+          $checksums = foreach ($file in $distributables) {
+            $hash = (Get-FileHash -Path $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($file.Name)"
           }
           $checksums | Set-Content -Path release/SHA256SUMS.txt -Encoding UTF8
           Write-Host "Generated SHA256SUMS.txt:"
@@ -115,10 +142,8 @@ jobs:
         with:
           name: manticollect-release-artifacts
           path: |
-            release/*.exe
-            release/*.zip
-            release/*.blockmap
-            release/latest.yml
+            release/MantiCollect-Setup-*.exe
+            release/manticollect-browser-extension-*.zip
             release/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
@@ -126,59 +151,119 @@ jobs:
   publish-draft-release:
     name: Publish Draft GitHub Release
     needs: build-and-package
-    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.create_draft_release == 'true'
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != '')
     runs-on: windows-latest
     permissions:
       contents: write
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
           name: manticollect-release-artifacts
           path: release
 
-      - name: Verify downloaded artifacts
+      - name: Recalculate and verify SHA-256 checksums
         shell: pwsh
         run: |
-          if (-not (Test-Path release/SHA256SUMS.txt)) {
-            Write-Error "SHA256SUMS.txt missing from downloaded artifacts!"
+          Write-Host "Recalculating SHA-256 checksums and verifying against SHA256SUMS.txt..."
+          $checksumFile = "release/SHA256SUMS.txt"
+          if (-not (Test-Path $checksumFile)) {
+            Write-Error "SHA256SUMS.txt manifest missing from downloaded artifacts!"
             exit 1
           }
-          $installer = Get-ChildItem -Path release/MantiCollect-Setup-*.exe -File
-          if (-not $installer) {
-            Write-Error "Installer binary missing from downloaded artifacts!"
-            exit 1
-          }
-          Write-Host "Ready to publish draft release with verified artifacts."
 
-      - name: Create Draft GitHub Release
+          $lines = Get-Content $checksumFile | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+          if ($lines.Count -eq 0) {
+            Write-Error "SHA256SUMS.txt manifest is empty!"
+            exit 1
+          }
+
+          $verifiedFiles = @()
+          foreach ($line in $lines) {
+            $parts = -split $line
+            $expectedHash = $parts[0].Trim().ToLowerInvariant()
+            $filename = $parts[1].Trim()
+            $filePath = Join-Path "release" $filename
+
+            if (-not (Test-Path $filePath)) {
+              Write-Error "Artifact listed in checksum manifest not found on disk: $filename"
+              exit 1
+            }
+
+            $actualHash = (Get-FileHash -Path $filePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualHash -ne $expectedHash) {
+              Write-Error "Checksum mismatch for $filename! Expected: $expectedHash, Calculated: $actualHash"
+              exit 1
+            }
+            $verifiedFiles += $filePath
+            Write-Host "✓ Verified $filename : $actualHash"
+          }
+
+          if ($verifiedFiles.Count -lt 2) {
+            Write-Error "Fewer than 2 verified release artifacts were validated!"
+            exit 1
+          }
+          Write-Host "All $($verifiedFiles.Count) artifacts verified against checksum manifest."
+
+      - name: Check for existing release and create Draft GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
         run: |
-          $TAG_NAME = if ("${{ github.ref }}".StartsWith("refs/tags/")) { "${{ github.ref }}".Replace("refs/tags/", "") } else { "v0.1.0-manual" }
+          $TAG_NAME = if ("${{ github.ref_type }}" -eq "tag") {
+            "${{ github.ref_name }}"
+          } else {
+            "${{ inputs.release_tag }}".Trim()
+          }
+
+          if (-not $TAG_NAME.StartsWith("v")) {
+            Write-Error "Invalid tag name '$TAG_NAME'. Must start with 'v'."
+            exit 1
+          }
+
+          # Check if a release already exists on GitHub for this tag
+          $existingRelease = gh release view $TAG_NAME --repo ${{ github.repository }} 2>&1
+          if ($LASTEXITCODE -eq 0) {
+            Write-Error "A release for tag '$TAG_NAME' already exists on GitHub! To prevent accidental overwrites, release creation aborted."
+            exit 1
+          }
+
+          $installer = Get-ChildItem -Path release/MantiCollect-Setup-*.exe -File | Select-Object -First 1
+          $extension = Get-ChildItem -Path release/manticollect-browser-extension-*.zip -File | Select-Object -First 1
+          $checksumManifest = "release/SHA256SUMS.txt"
           $isSigned = if ("${{ secrets.CSC_LINK }}" -ne "") { "Signed with Authenticode certificate" } else { "Unsigned development build (verify SHA-256 checksum)" }
-          Write-Host "Creating draft release for $TAG_NAME..."
 
           $releaseNotes = @"
           ## MantiCollect $TAG_NAME — A Mantitup Product
 
-          Local-first universal media downloader and digital collector for Windows.
+          Local-first universal media downloader, format converter, and digital collector for Windows.
 
-          ### Included Artifacts
-          - **MantiCollect-Setup-$($TAG_NAME.TrimStart('v')).exe**: Windows NSIS desktop installer (per-user `%LOCALAPPDATA%\Programs\MantiCollect`).
-          - **manticollect-browser-extension-$TAG_NAME.zip**: Manifest V3 browser extension for Google Chrome and Microsoft Edge.
-          - **SHA256SUMS.txt**: SHA-256 integrity checksums for all release binaries.
+          ### Included Distributables
+          - **$($installer.Name)**: Windows NSIS desktop installer (per-user `%LOCALAPPDATA%\Programs\MantiCollect`).
+          - **$($extension.Name)**: Manifest V3 browser extension for Google Chrome and Microsoft Edge.
+          - **SHA256SUMS.txt**: SHA-256 integrity checksum manifest.
 
           ### Security & Integrity
           - **Authenticode Status**: $isSigned
-          - **Verification**: Review SHA256SUMS.txt prior to installation.
+          - **Integrity Verification**: Compare downloaded files with `SHA256SUMS.txt` prior to installation.
 
-          *Note: This release is created as a draft for maintainer verification. Publication requires explicit maintainer approval.*
+          *Note: This release is created as a draft for maintainer review. Publication requires explicit manual approval.*
           "@
 
-          gh release create $TAG_NAME release/*.exe release/*.zip release/*.blockmap release/latest.yml release/SHA256SUMS.txt `
+          Write-Host "Creating draft release for $TAG_NAME via GitHub CLI on repo ${{ github.repository }}..."
+          gh release create $TAG_NAME `
+            $installer.FullName `
+            $extension.FullName `
+            $checksumManifest `
+            --repo ${{ github.repository }} `
             --title "MantiCollect $TAG_NAME" `
             --draft `
             --notes $releaseNotes
+
+          Write-Host "✓ Draft release created successfully on ${{ github.repository }} for $TAG_NAME"
