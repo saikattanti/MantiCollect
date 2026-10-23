@@ -22,6 +22,7 @@ import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { checkExistingRelease } from './check-existing-release.mjs';
+import { verifyDraftRelease } from './verify-draft-release.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, '..');
@@ -161,7 +162,24 @@ try {
     '--notes', releaseNotes
   ];
   const out = execFileSync('gh', ghArgs, { encoding: 'utf8' });
-  console.log(`SUCCESS: Draft release created: ${out.trim()}`);
+  console.log(`gh release create completed: ${out.trim()}`);
+
+  console.log('\n[VERIFICATION] Verifying created Draft Release on GitHub...');
+  const verifyResult = verifyDraftRelease({
+    tag: targetTag,
+    repo: 'saikattanti/MantiCollect',
+    expectedAssets: [installer, extension, 'SHA256SUMS.txt']
+  });
+
+  if (!verifyResult.valid) {
+    console.error(`\n[ERROR] Draft release verification FAILED: ${verifyResult.message}`);
+    process.exit(1);
+  }
+
+  console.log(`\n✓ SUCCESS: ${verifyResult.message}`);
+  if (verifyResult.details?.url) {
+    console.log(`Draft Release URL: ${verifyResult.details.url}`);
+  }
 } catch (err) {
   console.error(`FAILED to create draft release: ${err.message}`);
   process.exit(1);

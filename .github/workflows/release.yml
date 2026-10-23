@@ -262,7 +262,7 @@ jobs:
           $TARGET_COMMIT = "${{ needs.build-and-package.outputs.target_commit }}"
 
           # Verify no release already exists on GitHub for this tag
-          git checkout origin/main -- scripts/check-existing-release.mjs
+          git checkout origin/main -- scripts/check-existing-release.mjs scripts/verify-draft-release.mjs
           node scripts/check-existing-release.mjs --tag "$TAG_NAME" --repo "${{ github.repository }}"
           if ($LASTEXITCODE -ne 0) {
             Write-Error "Release validation check failed with exit code $LASTEXITCODE. Aborting release creation."
@@ -294,7 +294,7 @@ jobs:
           "@
 
           Write-Host "Creating draft release for $TAG_NAME (commit $TARGET_COMMIT) via GitHub CLI on repo ${{ github.repository }}..."
-          gh release create $TAG_NAME `
+          $createOutput = gh release create $TAG_NAME `
             $installer.FullName `
             $extension.FullName `
             $checksumManifest `
@@ -303,7 +303,28 @@ jobs:
             --verify-tag `
             --title "MantiCollect $TAG_NAME" `
             --draft `
-            --notes $releaseNotes
+            --notes $releaseNotes 2>&1
 
-          Write-Host "✓ Draft release created successfully on ${{ github.repository }} for $TAG_NAME"
+          $createExitCode = $LASTEXITCODE
+
+          # Immediate exit code check to prevent false-success
+          if ($createExitCode -ne 0) {
+            $sanitized = ($createOutput -join "`n") -replace 'ghp_[A-Za-z0-9_]+', '***' -replace 'github_pat_[A-Za-z0-9_]+', '***' -replace 'Bearer\s+[A-Za-z0-9_.-]+', 'Bearer ***'
+            Write-Error "gh release create failed with exit code $createExitCode! Error: $sanitized"
+            exit $createExitCode
+          }
+
+          Write-Host "gh release create command returned exit code 0. Verifying Draft Release on GitHub..."
+          node scripts/verify-draft-release.mjs `
+            --tag "$TAG_NAME" `
+            --repo "${{ github.repository }}" `
+            --target-commit "$TARGET_COMMIT" `
+            --expected-assets "$($installer.Name),$($extension.Name),SHA256SUMS.txt"
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Post-creation release verification failed with exit code $LASTEXITCODE! Draft Release does not exist or does not meet integrity requirements."
+            exit 1
+          }
+
+          Write-Host "✓ Draft release created and verified successfully on ${{ github.repository }} for $TAG_NAME"
           exit 0
